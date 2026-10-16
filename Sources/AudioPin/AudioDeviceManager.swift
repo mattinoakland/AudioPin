@@ -27,6 +27,9 @@ struct AudioDevice: Identifiable, Hashable {
     let name: String
     let hasInput: Bool
     let hasOutput: Bool
+    /// Software devices (Zoom, Loom, aggregates) rather than real hardware.
+    /// They're kept in the list so pins can match them, but hidden from menus.
+    let isVirtual: Bool
 }
 
 /// The three default-device slots macOS maintains.
@@ -103,7 +106,11 @@ final class AudioDeviceManager {
             let hasInput = streamCount(id, scope: kAudioDevicePropertyScopeInput) > 0
             let hasOutput = streamCount(id, scope: kAudioDevicePropertyScopeOutput) > 0
             guard hasInput || hasOutput else { return nil }
-            return AudioDevice(id: id, uid: uid, name: name, hasInput: hasInput, hasOutput: hasOutput)
+            let transport = transportType(id)
+            let isVirtual = transport == kAudioDeviceTransportTypeVirtual
+                || transport == kAudioDeviceTransportTypeAggregate
+                || transport == kAudioDeviceTransportTypeUnknown
+            return AudioDevice(id: id, uid: uid, name: name, hasInput: hasInput, hasOutput: hasOutput, isVirtual: isVirtual)
         }
     }
 
@@ -182,6 +189,15 @@ final class AudioDeviceManager {
         }
         guard status == noErr, let unmanaged = value else { return nil }
         return unmanaged.takeRetainedValue() as String
+    }
+
+    /// How the device is attached (built-in, USB, Bluetooth, virtual, ...).
+    private func transportType(_ objectID: AudioObjectID) -> UInt32 {
+        var address = Self.address(kAudioDevicePropertyTransportType)
+        var value: UInt32 = kAudioDeviceTransportTypeUnknown
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        let status = AudioObjectGetPropertyData(objectID, &address, 0, nil, &size, &value)
+        return status == noErr ? value : kAudioDeviceTransportTypeUnknown
     }
 
     /// Number of streams a device has in a scope; >0 means it can do

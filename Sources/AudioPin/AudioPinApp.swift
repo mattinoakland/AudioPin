@@ -9,7 +9,9 @@ struct AudioPinApp: App {
     @StateObject private var state = AppState()
 
     var body: some Scene {
-        MenuBarExtra("AudioPin", systemImage: state.enforcePins ? "speaker.wave.2.fill" : "speaker.wave.2") {
+        // A pushpin, so it isn't mistaken for the system Sound icon.
+        // Slashed when "Enforce pins" is off.
+        MenuBarExtra("AudioPin", systemImage: state.enforcePins ? "pin.fill" : "pin.slash") {
             MenuBarView()
                 .environmentObject(state)
         }

@@ -58,8 +58,10 @@ final class AppState: ObservableObject {
     @Published private(set) var pinnedOutputName: String?
     @Published private(set) var pinnedInputName: String?
 
-    var outputDevices: [AudioDevice] { devices.filter(\.hasOutput) }
-    var inputDevices: [AudioDevice] { devices.filter(\.hasInput) }
+    /// Real hardware only; virtual devices (Zoom, Loom, aggregates) are hidden
+    /// from the menus. A pin on one still works if it was set before.
+    var outputDevices: [AudioDevice] { devices.filter { $0.hasOutput && !$0.isVirtual } }
+    var inputDevices: [AudioDevice] { devices.filter { $0.hasInput && !$0.isVirtual } }
     var pinnedOutputConnected: Bool { pinnedOutputUID.map { uid in devices.contains { $0.uid == uid } } ?? false }
     var pinnedInputConnected: Bool { pinnedInputUID.map { uid in devices.contains { $0.uid == uid } } ?? false }
 
