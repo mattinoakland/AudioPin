@@ -317,6 +317,23 @@ final class AppState: ObservableObject {
     }
 
     private func applyRoutes() {
+        // A routed app's audio goes straight to its device's hardware level,
+        // which nothing else moves (the volume keys only touch the system
+        // output). If that level was left low, routed audio tops out low. So
+        // when a route starts to a device that isn't the system output, open
+        // the device all the way up and let the per-app slider be the volume.
+        for (bundleID, rule) in routeRules {
+            guard router.states[bundleID]?.isActive != true,
+                  let device = devices.first(where: { $0.uid == rule.deviceUID && $0.hasOutput }),
+                  device.uid != currentOutput?.uid,
+                  let level = manager.volume(of: device.id, scope: kAudioDevicePropertyScopeOutput),
+                  level < 0.999
+            else { continue }
+            if manager.setVolume(of: device.id, scope: kAudioDevicePropertyScopeOutput, to: 1) {
+                log.info("Opened \(device.name, privacy: .public) to 100% for route \(bundleID, privacy: .public) (was \(Int(level * 100))%)")
+            }
+        }
+
         let requests = routeRules.map { bundleID, rule in
             ProcessTapRouter.Request(
                 bundleID: bundleID,
