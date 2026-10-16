@@ -215,6 +215,39 @@ final class AppState: ObservableObject {
         return devices.first { $0.id == id }
     }
 
+    // MARK: - Device volume (pinned output level, pinned input gain)
+
+    /// The device whose level the output slider controls: the pinned output
+    /// if it's connected, otherwise whatever is the default right now.
+    var volumeOutputDevice: AudioDevice? {
+        if let uid = pinnedOutputUID, let d = devices.first(where: { $0.uid == uid }) { return d }
+        return currentOutput
+    }
+
+    var volumeInputDevice: AudioDevice? {
+        if let uid = pinnedInputUID, let d = devices.first(where: { $0.uid == uid }) { return d }
+        return currentInput
+    }
+
+    /// Current level, or nil if the device has no volume control.
+    func outputVolume() -> Float? {
+        volumeOutputDevice.flatMap { manager.volume(of: $0.id, scope: kAudioDevicePropertyScopeOutput) }
+    }
+
+    func inputGain() -> Float? {
+        volumeInputDevice.flatMap { manager.volume(of: $0.id, scope: kAudioDevicePropertyScopeInput) }
+    }
+
+    func setOutputVolume(_ value: Float) {
+        guard let device = volumeOutputDevice else { return }
+        manager.setVolume(of: device.id, scope: kAudioDevicePropertyScopeOutput, to: value)
+    }
+
+    func setInputGain(_ value: Float) {
+        guard let device = volumeInputDevice else { return }
+        manager.setVolume(of: device.id, scope: kAudioDevicePropertyScopeInput, to: value)
+    }
+
     // MARK: - Per-app routing (Phase 2)
 
     /// Route `bundleID` to `device`, or pass nil to remove the rule (back to

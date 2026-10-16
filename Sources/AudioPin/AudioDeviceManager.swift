@@ -144,6 +144,70 @@ final class AudioDeviceManager {
         }
     }
 
+    // MARK: - Device volume
+
+    /// 'vmvc': the "virtual main volume" the system volume slider moves.
+    /// Declared in AudioToolbox as kAudioHardwareServiceDeviceProperty_VirtualMainVolume;
+    /// spelled out here so this file only needs CoreAudio.
+    private let virtualMainVolumeSelector: AudioObjectPropertySelector = 0x766D_7663
+
+    /// The device's volume (0...1) in the given scope (output = speaker level,
+    /// input = mic gain), or nil if the device has no software volume control
+    /// (HDMI displays, for example).
+    func volume(of deviceID: AudioDeviceID, scope: AudioObjectPropertyScope) -> Float? {
+        // The "virtual main" volume is what the system volume slider moves.
+        var main = Self.address(virtualMainVolumeSelector, scope: scope)
+        if AudioObjectHasProperty(deviceID, &main) {
+            var value: Float32 = 0
+            var size = UInt32(MemoryLayout<Float32>.size)
+            if AudioObjectGetPropertyData(deviceID, &main, 0, nil, &size, &value) == noErr {
+                return value
+            }
+        }
+        // Fall back to the per-channel scalar (average of the first two channels).
+        var values: [Float32] = []
+        for channel in [1, 2] as [AudioObjectPropertyElement] {
+            var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar, mScope: scope, mElement: channel)
+            guard AudioObjectHasProperty(deviceID, &address) else { continue }
+            var value: Float32 = 0
+            var size = UInt32(MemoryLayout<Float32>.size)
+            if AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &value) == noErr {
+                values.append(value)
+            }
+        }
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Float(values.count)
+    }
+
+    /// Sets the device's volume (0...1) in the given scope. Returns false if
+    /// the device doesn't allow it.
+    @discardableResult
+    func setVolume(of deviceID: AudioDeviceID, scope: AudioObjectPropertyScope, to volume: Float) -> Bool {
+        var value = Float32(max(0, min(1, volume)))
+        let size = UInt32(MemoryLayout<Float32>.size)
+
+        var main = Self.address(virtualMainVolumeSelector, scope: scope)
+        var settable: DarwinBoolean = false
+        if AudioObjectHasProperty(deviceID, &main),
+           AudioObjectIsPropertySettable(deviceID, &main, &settable) == noErr, settable.boolValue,
+           AudioObjectSetPropertyData(deviceID, &main, 0, nil, size, &value) == noErr {
+            return true
+        }
+
+        var any = false
+        for channel in [1, 2] as [AudioObjectPropertyElement] {
+            var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyVolumeScalar, mScope: scope, mElement: channel)
+            guard AudioObjectHasProperty(deviceID, &address) else { continue }
+            if AudioObjectSetPropertyData(deviceID, &address, 0, nil, size, &value) == noErr {
+                any = true
+            }
+        }
+        if !any {
+            log.error("Device \(deviceID) has no settable volume in scope \(scope)")
+        }
+        return any
+    }
+
     // MARK: - Listeners
 
     private func startListening() {

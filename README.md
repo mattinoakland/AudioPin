@@ -55,6 +55,10 @@ Click the speaker icon in the menu bar:
   Checking a device applies it immediately. Uncheck or "Clear ... pin" to stop.
 - If a pinned device is unplugged, the menu says "(not connected)" and AudioPin
   leaves macOS's choice alone until the device returns.
+- A **volume slider** sits under the pinned output list and a **gain slider**
+  under the pinned input list. They move the pinned device's own level, the
+  same one the volume keys and Sound settings change. Devices without a
+  software level (HDMI displays, for example) show a note instead.
 - **Enforce pins** (on by default) is the master switch. Turn it off to let
   macOS do whatever it wants while keeping your pins saved. The icon is filled
   when enforcing, outlined when not.

@@ -74,6 +74,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         if state.pinnedOutputUID != nil {
             menu.addItem(action("Clear output pin") { [state] in state.pinOutput(nil) })
         }
+        menu.addItem(levelSlider(
+            device: state.volumeOutputDevice, value: state.outputVolume(), symbol: "speaker.wave.2",
+            label: "Volume"
+        ) { [state] in state.setOutputVolume(Float($0)) })
         menu.addItem(.separator())
 
         menu.addItem(.sectionHeader(title: "Pinned input"))
@@ -89,6 +93,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         if state.pinnedInputUID != nil {
             menu.addItem(action("Clear input pin") { [state] in state.pinInput(nil) })
         }
+        menu.addItem(levelSlider(
+            device: state.volumeInputDevice, value: state.inputGain(), symbol: "mic",
+            label: "Gain"
+        ) { [state] in state.setInputGain(Float($0)) })
         menu.addItem(.separator())
 
         // Routed apps live in the main menu, each with its volume slider right
@@ -101,7 +109,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 menu.addItem(appItem(app))
                 if let rule = state.routeRules[app.bundleID] {
                     let sliderItem = NSMenuItem()
-                    sliderItem.view = VolumeSliderView(value: rule.volume) { [state] value in
+                    sliderItem.view = VolumeSliderView(value: rule.volume, symbol: "speaker.wave.2") { [state] value in
                         state.setVolume(for: app.bundleID, value)
                     }
                     menu.addItem(sliderItem)
@@ -176,6 +184,17 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         return item
     }
 
+    /// A slider row for a device's hardware level, or a note when the device
+    /// has no software volume control (HDMI displays, some USB interfaces).
+    private func levelSlider(device: AudioDevice?, value: Float?, symbol: String, label: String,
+                             onChange: @escaping (Double) -> Void) -> NSMenuItem {
+        guard let device else { return info("\(label): no device") }
+        guard let value else { return info("\(device.name) has no \(label.lowercased()) control") }
+        let item = NSMenuItem()
+        item.view = VolumeSliderView(value: Double(value), symbol: symbol, onChange: onChange)
+        return item
+    }
+
     // MARK: - Item helpers
 
     private func info(_ title: String) -> NSMenuItem {
@@ -213,11 +232,11 @@ private final class VolumeSliderView: NSView {
     private let percent = NSTextField(labelWithString: "")
     private let onChange: (Double) -> Void
 
-    init(value: Double, onChange: @escaping (Double) -> Void) {
+    init(value: Double, symbol: String, onChange: @escaping (Double) -> Void) {
         self.onChange = onChange
         super.init(frame: NSRect(x: 0, y: 0, width: 250, height: 30))
 
-        let icon = NSImageView(image: NSImage(systemSymbolName: "speaker.wave.2", accessibilityDescription: nil) ?? NSImage())
+        let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
         icon.frame = NSRect(x: 24, y: 7, width: 16, height: 16)
         icon.contentTintColor = .secondaryLabelColor
         addSubview(icon)
