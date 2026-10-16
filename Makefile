@@ -26,4 +26,4 @@ clean:
 
 # Live log stream from the app (what Console.app would show).
 logs:
-	log stream --level info --style compact --predicate 'subsystem == "com.mattmoglia.AudioPin"'
+	/usr/bin/log stream --level info --style compact --predicate 'subsystem == "com.mattmoglia.AudioPin"'

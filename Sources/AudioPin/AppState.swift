@@ -67,7 +67,7 @@ final class AppState: ObservableObject {
 
         refreshLoginItemStatus()
         refreshAndEnforce()
-        log.info("AudioPin started. enforce=\(self.enforcePins) output=\(self.pinnedOutputUID ?? "none") input=\(self.pinnedInputUID ?? "none")")
+        log.info("AudioPin started. enforce=\(self.enforcePins) output=\(self.pinnedOutputUID ?? "none", privacy: .public) input=\(self.pinnedInputUID ?? "none", privacy: .public)")
     }
 
     // MARK: - Pinning
@@ -115,7 +115,7 @@ final class AppState: ObservableObject {
 
         if let uid = pinnedOutputUID, let target = devices.first(where: { $0.uid == uid }) {
             if currentOutput?.uid != uid {
-                log.info("Restoring pinned output: \(target.name)")
+                log.info("Restoring pinned output: \(target.name, privacy: .public)")
                 changed = manager.setDefaultDevice(.output, to: target.id) || changed
             }
             // Keep alerts/sound effects on the same device as music.
@@ -126,7 +126,7 @@ final class AppState: ObservableObject {
 
         if let uid = pinnedInputUID, let target = devices.first(where: { $0.uid == uid }) {
             if currentInput?.uid != uid {
-                log.info("Restoring pinned input: \(target.name)")
+                log.info("Restoring pinned input: \(target.name, privacy: .public)")
                 changed = manager.setDefaultDevice(.input, to: target.id) || changed
             }
         }
@@ -176,7 +176,7 @@ final class AppState: ObservableObject {
             launchAtLoginMessage = nil
             log.info("Launch at login -> \(enabled)")
         } catch {
-            log.error("Launch at login change failed: \(error.localizedDescription)")
+            log.error("Launch at login change failed: \(error.localizedDescription, privacy: .public)")
             launchAtLoginMessage = "Couldn't change login item: \(error.localizedDescription)"
         }
         refreshLoginItemStatus()

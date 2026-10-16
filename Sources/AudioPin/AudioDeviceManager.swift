@@ -126,10 +126,10 @@ final class AudioDeviceManager {
             UInt32(MemoryLayout<AudioDeviceID>.size), &id
         )
         if status == noErr {
-            log.info("Set default \(role.label) -> device \(deviceID)")
+            log.info("Set default \(role.label, privacy: .public) -> device \(deviceID)")
             return true
         } else {
-            log.error("Failed to set default \(role.label) to \(deviceID): \(status)")
+            log.error("Failed to set default \(role.label, privacy: .public) to \(deviceID): \(status)")
             return false
         }
     }

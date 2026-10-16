@@ -33,7 +33,7 @@ This copies it to `/Applications` and launches it from there. Launch-at-login
 works most reliably from `/Applications`.
 
 Other targets: `make stop`, `make uninstall`, `make clean`, `make logs`
-(streams the app's log lines; the same lines are visible in Console.app under
+(streams the app's log lines via /usr/bin/log, since zsh has a `log` builtin; the same lines are visible in Console.app under
 subsystem `com.mattmoglia.AudioPin`).
 
 ### Opening in Xcode
