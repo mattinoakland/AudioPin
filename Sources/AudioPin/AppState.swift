@@ -25,6 +25,23 @@ struct RouteRule: Codable, Equatable {
     var appName: String
     var deviceUID: String
     var deviceName: String
+    /// 0...1, applied to the routed audio. Older saved rules have no value.
+    var volume: Double
+
+    init(appName: String, deviceUID: String, deviceName: String, volume: Double = 1) {
+        self.appName = appName
+        self.deviceUID = deviceUID
+        self.deviceName = deviceName
+        self.volume = volume
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        appName = try c.decode(String.self, forKey: .appName)
+        deviceUID = try c.decode(String.self, forKey: .deviceUID)
+        deviceName = try c.decode(String.self, forKey: .deviceName)
+        volume = try c.decodeIfPresent(Double.self, forKey: .volume) ?? 1
+    }
 }
 
 /// An app the routing menu can show: running GUI apps plus any app that has
@@ -34,7 +51,13 @@ struct RoutableApp: Identifiable, Hashable {
     let bundleID: String
     let name: String
     let pid: pid_t?
+    let icon: NSImage?
     var isRunning: Bool { pid != nil }
+
+    static func == (lhs: RoutableApp, rhs: RoutableApp) -> Bool {
+        lhs.bundleID == rhs.bundleID && lhs.name == rhs.name && lhs.pid == rhs.pid
+    }
+    func hash(into hasher: inout Hasher) { hasher.combine(bundleID) }
 }
 
 @MainActor
@@ -198,7 +221,8 @@ final class AppState: ObservableObject {
     /// the system default).
     func setRoute(for app: RoutableApp, to device: AudioDevice?) {
         if let device {
-            routeRules[app.bundleID] = RouteRule(appName: app.name, deviceUID: device.uid, deviceName: device.name)
+            let volume = routeRules[app.bundleID]?.volume ?? 1
+            routeRules[app.bundleID] = RouteRule(appName: app.name, deviceUID: device.uid, deviceName: device.name, volume: volume)
             log.info("Rule set: \(app.bundleID, privacy: .public) -> \(device.name, privacy: .public)")
         } else {
             routeRules[app.bundleID] = nil
@@ -207,6 +231,15 @@ final class AppState: ObservableObject {
         persist()
         refreshRoutableApps()
         applyRoutes()
+    }
+
+    /// Volume for a routed app, 0...1. Applied live; saved with the rule.
+    func setVolume(for bundleID: String, _ volume: Double) {
+        guard routeRules[bundleID] != nil else { return }
+        let clamped = max(0, min(1, volume))
+        routeRules[bundleID]?.volume = clamped
+        router.setGain(bundleID: bundleID, Float(clamped))
+        persist()
     }
 
     /// Running GUI apps (except ourselves) plus any app that has a rule.
@@ -218,13 +251,23 @@ final class AppState: ObservableObject {
             byBundle[bundleID] = RoutableApp(
                 bundleID: bundleID,
                 name: app.localizedName ?? bundleID,
-                pid: app.processIdentifier
+                pid: app.processIdentifier,
+                icon: Self.menuIcon(app.icon)
             )
         }
         for (bundleID, rule) in routeRules where byBundle[bundleID] == nil {
-            byBundle[bundleID] = RoutableApp(bundleID: bundleID, name: rule.appName, pid: nil)
+            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+            let icon = url.map { NSWorkspace.shared.icon(forFile: $0.path) }
+            byBundle[bundleID] = RoutableApp(bundleID: bundleID, name: rule.appName, pid: nil, icon: Self.menuIcon(icon))
         }
         routableApps = byBundle.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// A copy of an app icon sized for a menu row.
+    private static func menuIcon(_ image: NSImage?) -> NSImage? {
+        guard let image, let copy = image.copy() as? NSImage else { return nil }
+        copy.size = NSSize(width: 16, height: 16)
+        return copy
     }
 
     private func applyRoutes() {
@@ -232,7 +275,8 @@ final class AppState: ObservableObject {
             ProcessTapRouter.Request(
                 bundleID: bundleID,
                 pid: routableApps.first { $0.bundleID == bundleID }?.pid,
-                device: devices.first { $0.uid == rule.deviceUID && $0.hasOutput }
+                device: devices.first { $0.uid == rule.deviceUID && $0.hasOutput },
+                volume: Float(rule.volume)
             )
         }
         router.apply(requests)

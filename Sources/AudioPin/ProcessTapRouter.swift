@@ -17,6 +17,7 @@
 // This class is not thread-safe; AppState drives it from the main actor.
 // The IOProc block runs on its own queue and touches only its buffers.
 
+import Accelerate
 import CoreAudio
 import Foundation
 import os
@@ -53,6 +54,9 @@ final class ProcessTapRouter {
         var tapID = AudioObjectID(kAudioObjectUnknown)
         var aggregateID = AudioObjectID(kAudioObjectUnknown)
         var ioProcID: AudioDeviceIOProcID?
+        /// Per-route volume, read by the IOProc on the audio thread. A plain
+        /// Float write is atomic on Apple Silicon, so no lock is needed.
+        let gain = GainBox()
 
         init(bundleID: String, pid: pid_t, deviceUID: String, deviceID: AudioDeviceID) {
             self.bundleID = bundleID
@@ -60,6 +64,11 @@ final class ProcessTapRouter {
             self.deviceUID = deviceUID
             self.deviceID = deviceID
         }
+    }
+
+    /// Holds the route's volume (0...1) so the IOProc block can read it.
+    final class GainBox {
+        var value: Float = 1
     }
 
     private let systemObject = AudioObjectID(kAudioObjectSystemObject)
@@ -76,6 +85,12 @@ final class ProcessTapRouter {
         let bundleID: String
         let pid: pid_t?            // nil when the app isn't running
         let device: AudioDevice?   // nil when the target device isn't connected
+        let volume: Float          // 0...1, applied to the copied audio
+    }
+
+    /// Change a live route's volume without rebuilding it.
+    func setGain(bundleID: String, _ volume: Float) {
+        routes[bundleID]?.gain.value = max(0, min(1, volume))
     }
 
     /// Make reality match `requests`: build routes that are missing, rebuild
@@ -106,11 +121,14 @@ final class ProcessTapRouter {
                 let unchanged = existing.pid == pid
                     && existing.deviceUID == device.uid
                     && existing.deviceID == device.id
-                if unchanged, case .active = states[request.bundleID] { continue }
+                if unchanged, case .active = states[request.bundleID] {
+                    existing.gain.value = request.volume
+                    continue
+                }
                 teardown(bundleID: request.bundleID)
             }
 
-            states[request.bundleID] = build(bundleID: request.bundleID, pid: pid, device: device)
+            states[request.bundleID] = build(bundleID: request.bundleID, pid: pid, device: device, volume: request.volume)
         }
     }
 
@@ -124,7 +142,7 @@ final class ProcessTapRouter {
 
     // MARK: - Building a route
 
-    private func build(bundleID: String, pid: pid_t, device: AudioDevice) -> RouteState {
+    private func build(bundleID: String, pid: pid_t, device: AudioDevice, volume: Float) -> RouteState {
         guard let processObject = processObject(forPID: pid) else {
             // The app hasn't touched Core Audio yet. AppState retries when the
             // HAL's process list changes.
@@ -132,6 +150,7 @@ final class ProcessTapRouter {
         }
 
         let route = Route(bundleID: bundleID, pid: pid, deviceUID: device.uid, deviceID: device.id)
+        route.gain.value = max(0, min(1, volume))
 
         // 1. Process tap. Stereo mixdown keeps the IOProc simple regardless of
         //    how many channels the app actually produces.
@@ -172,9 +191,10 @@ final class ProcessTapRouter {
         }
 
         // 3. IOProc: copy tapped input to the output device.
+        let gain = route.gain
         status = AudioDeviceCreateIOProcIDWithBlock(&route.ioProcID, route.aggregateID, ioQueue) {
             _, inputData, _, outputData, _ in
-            ProcessTapRouter.copy(from: inputData, to: outputData)
+            ProcessTapRouter.copy(from: inputData, to: outputData, gain: gain.value)
         }
         guard status == noErr, route.ioProcID != nil else {
             log.error("CreateIOProcID failed for \(bundleID, privacy: .public): \(status)")
@@ -222,7 +242,7 @@ final class ProcessTapRouter {
     /// Copies each input buffer into the matching output buffer. The tap is a
     /// stereo mixdown; if the output device has a different channel count,
     /// channels are matched frame by frame and the extras are silenced.
-    private static func copy(from inputList: UnsafePointer<AudioBufferList>, to outputList: UnsafeMutablePointer<AudioBufferList>) {
+    private static func copy(from inputList: UnsafePointer<AudioBufferList>, to outputList: UnsafeMutablePointer<AudioBufferList>, gain: Float) {
         let input = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputList))
         let output = UnsafeMutableAudioBufferListPointer(outputList)
 
@@ -244,6 +264,11 @@ final class ProcessTapRouter {
                 let n = min(inBytes, outBytes)
                 memcpy(outData, inData, n)
                 if n < outBytes { memset(outData + n, 0, outBytes - n) }
+                if gain != 1 {
+                    var g = gain
+                    let samples = outData.assumingMemoryBound(to: Float32.self)
+                    vDSP_vsmul(samples, 1, &g, samples, 1, vDSP_Length(n / MemoryLayout<Float32>.size))
+                }
                 continue
             }
 
@@ -258,7 +283,7 @@ final class ProcessTapRouter {
             let channels = min(inChannels, outChannels)
             for frame in 0..<frames {
                 for channel in 0..<channels {
-                    dst[frame * outChannels + channel] = src[frame * inChannels + channel]
+                    dst[frame * outChannels + channel] = src[frame * inChannels + channel] * gain
                 }
             }
         }

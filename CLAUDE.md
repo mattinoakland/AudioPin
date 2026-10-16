@@ -7,4 +7,5 @@ default audio output/input devices so macOS can't auto-switch them. See README.m
 - `Resources/Info.plist` is copied into the bundle by build.sh. `LSUIElement` makes it menu-bar only.
 - Pins are stored by device UID in UserDefaults (domain `com.mattmoglia.AudioPin`).
 - Logs: `make logs` (os_log subsystem `com.mattmoglia.AudioPin`; info level, so `log show` needs `--info`; use `/usr/bin/log`, zsh shadows `log`).
+- The dropdown is AppKit (MenuBarController.swift, NSMenu rebuilt on open) so slider rows can live in it; not SwiftUI MenuBarExtra.
 - Phase 2 per-app routing lives in ProcessTapRouter.swift (process tap -> private aggregate -> IOProc copy). Rules are JSON in UserDefaults key `routeRules`. Needs the system audio recording permission (NSAudioCaptureUsageDescription).

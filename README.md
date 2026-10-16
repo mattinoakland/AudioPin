@@ -39,8 +39,12 @@ subsystem `com.mattmoglia.AudioPin`).
 ### Opening in Xcode
 
 Open `Package.swift` in Xcode to browse and edit the code. Running from Xcode
-works for debugging but launches without the app's `Info.plist`, so it shows a
-Dock icon and can't register as a login item. Use `make run` for the real thing.
+works for debugging but launches without the app's `Info.plist`, so it can't
+register as a login item. Use `make run` for the real thing.
+
+If you use Bartender or a similar menu bar organizer, it may file AudioPin's
+pushpin icon under a hidden section the first time; move it to the shown
+section in that app.
 
 ## Using it
 
@@ -77,6 +81,10 @@ device. Open the menu, go to **App routing**, pick an app, and choose a device.
   audio, device not connected, or an error.
 - Apps with a rule are listed first; apps that aren't running show
   "(not running)".
+- Each routed app's submenu has a **Volume** slider. It scales the audio
+  AudioPin sends to that device, so the Mac's volume keys (which control the
+  pinned system output) and the device's own volume wheel both still work on
+  top of it. The setting is saved with the rule.
 - Quitting AudioPin, removing a rule, or unplugging the target device tears the
   route down, and the app goes back to playing through the system default.
 
@@ -109,7 +117,10 @@ the device again.
   (`CATapDescription` + `AudioHardwareCreateProcessTap`, muting the app's
   normal output while tapped), a private aggregate device containing the tap
   and the target device, and an IOProc that copies tapped audio to the output.
-- `MenuBarView.swift` is the dropdown. `AudioPinApp.swift` is the entry point.
+- `MenuBarController.swift` is the status item and dropdown, built with AppKit
+  (`NSStatusItem` + `NSMenu`) so the volume sliders can live inside the menu.
+  The menu is rebuilt from `AppState` each time it opens.
+- `AudioPinApp.swift` is the entry point (an `NSApplicationDelegate`).
 
 ## Known limits
 

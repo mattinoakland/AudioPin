@@ -1,20 +1,27 @@
 // AudioPinApp.swift
-// Entry point. A menu-bar-only app (LSUIElement in Info.plist), so the only
-// scene is the MenuBarExtra.
+// Entry point. A menu-bar-only app (LSUIElement in Info.plist): no windows,
+// just the status item that MenuBarController owns.
 
-import SwiftUI
+import AppKit
 
 @main
-struct AudioPinApp: App {
-    @StateObject private var state = AppState()
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var state: AppState?
+    private var menuBar: MenuBarController?
 
-    var body: some Scene {
-        // A pushpin, so it isn't mistaken for the system Sound icon.
-        // Slashed when "Enforce pins" is off.
-        MenuBarExtra("AudioPin", systemImage: state.enforcePins ? "pin.fill" : "pin.slash") {
-            MenuBarView()
-                .environmentObject(state)
-        }
-        .menuBarExtraStyle(.menu)
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.run()
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Belt and braces with LSUIElement: never show a Dock icon.
+        NSApplication.shared.setActivationPolicy(.accessory)
+        let state = AppState()
+        self.state = state
+        menuBar = MenuBarController(state: state)
     }
 }
