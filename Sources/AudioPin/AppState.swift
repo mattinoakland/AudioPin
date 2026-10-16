@@ -322,22 +322,34 @@ final class AppState: ObservableObject {
         // A routed app's audio goes straight to its device's hardware level,
         // which nothing else moves (the volume keys only touch the system
         // output). If that level was left low, routed audio tops out low. So
-        // when a route starts to a device that isn't the system output, open
-        // the device all the way up and let the per-app slider be the volume.
-        // Also re-check when the system output moves away from a routed
-        // device: that device's level is no longer under the volume keys.
+        // when a route starts to a device that isn't the system output, or
+        // the system output moves off a routed device, open the device all
+        // the way up and scale the app's slider down by the same amount, so
+        // nothing gets louder but the slider now has headroom above it.
         let outputChanged = currentOutput?.uid != lastSystemOutputUID
         lastSystemOutputUID = currentOutput?.uid
+        var opened: [String: Float] = [:]   // device UID -> level it had before
         for (bundleID, rule) in routeRules {
             guard router.states[bundleID]?.isActive != true || outputChanged,
+                  opened[rule.deviceUID] == nil,
                   let device = devices.first(where: { $0.uid == rule.deviceUID && $0.hasOutput }),
                   device.uid != currentOutput?.uid,
                   let level = manager.volume(of: device.id, scope: kAudioDevicePropertyScopeOutput),
                   level < 0.999
             else { continue }
             if manager.setVolume(of: device.id, scope: kAudioDevicePropertyScopeOutput, to: 1) {
+                opened[device.uid] = level
                 log.info("Opened \(device.name, privacy: .public) to 100% for route \(bundleID, privacy: .public) (was \(Int(level * 100))%)")
             }
+        }
+        if !opened.isEmpty {
+            for (bundleID, rule) in routeRules {
+                guard let level = opened[rule.deviceUID] else { continue }
+                let scaled = max(0, min(1, rule.volume * Double(level)))
+                routeRules[bundleID]?.volume = scaled
+                log.info("Scaled \(bundleID, privacy: .public) slider \(Int(rule.volume * 100))% -> \(Int(scaled * 100))% to keep loudness")
+            }
+            persist()
         }
 
         let requests = routeRules.map { bundleID, rule in

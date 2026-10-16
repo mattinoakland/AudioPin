@@ -88,11 +88,10 @@ device. Open the menu, go to **App routing**, pick an app, and choose a device.
 - Apps with a rule are listed first; apps that aren't running show
   "(not running)".
 - Each routed app has a **Volume** slider under it. It scales the audio
-  AudioPin sends to that device. When a route starts to a device that isn't
-  the system output, AudioPin turns that device's own level up to 100% so the
-  routed slider is the whole range (otherwise routed audio would top out at
-  wherever that device's level was last left). The setting is saved with the
-  rule. It scales the audio
+  AudioPin sends to that device. When a routed device isn't the system output
+  (so the volume keys can't reach it), AudioPin turns that device's own level
+  up to 100% and scales the app's slider down by the same amount: nothing gets
+  louder, but the slider now has headroom. The setting is saved with the rule. It scales the audio
   AudioPin sends to that device, so the Mac's volume keys (which control the
   pinned system output) and the device's own volume wheel both still work on
   top of it. The setting is saved with the rule.
