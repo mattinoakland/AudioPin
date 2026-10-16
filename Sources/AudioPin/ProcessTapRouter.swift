@@ -32,6 +32,11 @@ enum RouteState: Equatable {
     case deviceNotConnected
     case failed(String)
 
+    var isActive: Bool {
+        if case .active = self { return true }
+        return false
+    }
+
     var text: String {
         switch self {
         case .active(let name):   return "Routing to \(name)"

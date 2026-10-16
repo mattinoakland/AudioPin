@@ -280,12 +280,16 @@ private struct RoutedAppRow: View {
                 Spacer()
                 devicePicker
             }
-            HStack(spacing: 8) {
-                Color.clear.frame(width: 16)
-                Text(state.routeStates[app.bundleID]?.text ?? rule.deviceName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            // The popup already names the device, so only say something
+            // when the route isn't actually working.
+            if let status = state.routeStates[app.bundleID], !status.isActive {
+                HStack(spacing: 8) {
+                    Color.clear.frame(width: 16)
+                    Text(status.text)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
         }
         .padding(.horizontal, 14)
