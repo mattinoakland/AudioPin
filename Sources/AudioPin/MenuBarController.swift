@@ -91,7 +91,26 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        let routing = NSMenuItem(title: "App routing", action: nil, keyEquivalent: "")
+        // Routed apps live in the main menu, each with its volume slider right
+        // under it, so changing a level is two clicks. The row's submenu holds
+        // the device choice.
+        let routed = state.routableApps.filter { state.routeRules[$0.bundleID] != nil }
+        if !routed.isEmpty {
+            menu.addItem(.sectionHeader(title: "Routed apps"))
+            for app in routed {
+                menu.addItem(appItem(app))
+                if let rule = state.routeRules[app.bundleID] {
+                    let sliderItem = NSMenuItem()
+                    sliderItem.view = VolumeSliderView(value: rule.volume) { [state] value in
+                        state.setVolume(for: app.bundleID, value)
+                    }
+                    menu.addItem(sliderItem)
+                }
+            }
+            menu.addItem(.separator())
+        }
+
+        let routing = NSMenuItem(title: "Route an app", action: nil, keyEquivalent: "")
         routing.submenu = routingMenu()
         menu.addItem(routing)
         menu.addItem(.separator())
@@ -111,21 +130,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(action("Quit AudioPin", keyEquivalent: "q") { NSApplication.shared.terminate(nil) })
     }
 
-    /// The "App routing" submenu: routed apps first, then everything running.
+    /// The "Route an app" submenu: running apps that aren't routed yet.
     private func routingMenu() -> NSMenu {
         let submenu = NSMenu()
         submenu.autoenablesItems = false
-
-        let routed = state.routableApps.filter { state.routeRules[$0.bundleID] != nil }
         let others = state.routableApps.filter { state.routeRules[$0.bundleID] == nil }
-
-        if routed.isEmpty {
-            submenu.addItem(info("No apps routed yet"))
-        } else {
-            submenu.addItem(.sectionHeader(title: "Routed"))
-            for app in routed { submenu.addItem(appItem(app)) }
-        }
-        submenu.addItem(.separator())
         submenu.addItem(.sectionHeader(title: "Running apps"))
         for app in others { submenu.addItem(appItem(app)) }
         return submenu
@@ -150,7 +159,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             submenu.addItem(.separator())
         }
 
-        submenu.addItem(action("System default", checked: rule == nil) { [state] in
+        submenu.addItem(action(rule == nil ? "System default" : "Stop routing (system default)", checked: rule == nil) { [state] in
             state.setRoute(for: app, to: nil)
         })
         submenu.addItem(.separator())
@@ -161,16 +170,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         if let rule, !state.outputDevices.contains(where: { $0.uid == rule.deviceUID }) {
             submenu.addItem(info("\(rule.deviceName) (not connected)"))
-        }
-
-        if let rule {
-            submenu.addItem(.separator())
-            submenu.addItem(.sectionHeader(title: "Volume"))
-            let sliderItem = NSMenuItem()
-            sliderItem.view = VolumeSliderView(value: rule.volume) { [state] value in
-                state.setVolume(for: app.bundleID, value)
-            }
-            submenu.addItem(sliderItem)
         }
 
         item.submenu = submenu
@@ -216,14 +215,14 @@ private final class VolumeSliderView: NSView {
 
     init(value: Double, onChange: @escaping (Double) -> Void) {
         self.onChange = onChange
-        super.init(frame: NSRect(x: 0, y: 0, width: 240, height: 30))
+        super.init(frame: NSRect(x: 0, y: 0, width: 250, height: 30))
 
         let icon = NSImageView(image: NSImage(systemSymbolName: "speaker.wave.2", accessibilityDescription: nil) ?? NSImage())
-        icon.frame = NSRect(x: 14, y: 7, width: 16, height: 16)
+        icon.frame = NSRect(x: 24, y: 7, width: 16, height: 16)
         icon.contentTintColor = .secondaryLabelColor
         addSubview(icon)
 
-        slider.frame = NSRect(x: 36, y: 5, width: 150, height: 20)
+        slider.frame = NSRect(x: 46, y: 5, width: 150, height: 20)
         slider.minValue = 0
         slider.maxValue = 1
         slider.doubleValue = value
@@ -233,7 +232,7 @@ private final class VolumeSliderView: NSView {
         slider.action = #selector(changed)
         addSubview(slider)
 
-        percent.frame = NSRect(x: 190, y: 7, width: 44, height: 16)
+        percent.frame = NSRect(x: 200, y: 7, width: 44, height: 16)
         percent.alignment = .right
         percent.font = .menuFont(ofSize: NSFont.smallSystemFontSize)
         percent.textColor = .secondaryLabelColor
