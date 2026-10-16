@@ -97,6 +97,8 @@ final class AppState: ObservableObject {
     private var pendingRefresh: DispatchWorkItem?
     private let debounce: TimeInterval = 0.3
     private var observers: [NSObjectProtocol] = []
+    /// System output seen on the last route pass, to notice when it moves.
+    private var lastSystemOutputUID: String?
 
     private enum Key {
         static let pinnedOutputUID = "pinnedOutputUID"
@@ -322,8 +324,12 @@ final class AppState: ObservableObject {
         // output). If that level was left low, routed audio tops out low. So
         // when a route starts to a device that isn't the system output, open
         // the device all the way up and let the per-app slider be the volume.
+        // Also re-check when the system output moves away from a routed
+        // device: that device's level is no longer under the volume keys.
+        let outputChanged = currentOutput?.uid != lastSystemOutputUID
+        lastSystemOutputUID = currentOutput?.uid
         for (bundleID, rule) in routeRules {
-            guard router.states[bundleID]?.isActive != true,
+            guard router.states[bundleID]?.isActive != true || outputChanged,
                   let device = devices.first(where: { $0.uid == rule.deviceUID && $0.hasOutput }),
                   device.uid != currentOutput?.uid,
                   let level = manager.volume(of: device.id, scope: kAudioDevicePropertyScopeOutput),
