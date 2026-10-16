@@ -8,6 +8,8 @@
 	<string>AudioPin</string>
 	<key>CFBundleExecutable</key>
 	<string>AudioPin</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.mattmoglia.AudioPin</string>
 	<key>CFBundleInfoDictionaryVersion</key>

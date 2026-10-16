@@ -92,6 +92,29 @@ Routed audio has a small delay (a few milliseconds). That doesn't matter for
 music. Zoom isn't affected unless you route Zoom itself, so leave Zoom alone
 and pick its devices inside Zoom.
 
+## Sharing it
+
+```bash
+make dist
+```
+
+That writes `dist/AudioPin.zip`, a universal build (Apple Silicon and Intel)
+you can send to anyone on macOS 14.2 or later. The app isn't signed with an
+Apple Developer ID or notarized, so the first launch on another Mac is blocked
+by Gatekeeper. Tell your friend to:
+
+1. Unzip it and drag `AudioPin.app` into Applications.
+2. Double-click it once; macOS will refuse and say it can't verify the app.
+3. Open System Settings > Privacy & Security, scroll down, and click
+   **Open Anyway** next to the AudioPin message, then confirm.
+
+After that it opens normally. Routing an app will also ask them for the
+system audio recording permission, same as it did for you.
+
+If you ever want to skip the "Open Anyway" dance, you'd sign with a Developer
+ID certificate and notarize the app, which needs an Apple Developer account
+(US$99 per year).
+
 ## Permissions
 
 Pinning (Phase 1) needs no permission.

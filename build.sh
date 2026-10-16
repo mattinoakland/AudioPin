@@ -4,14 +4,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 CONFIG="${1:-release}"
-swift build -c "$CONFIG" --arch arm64
-BIN_DIR="$(swift build -c "$CONFIG" --arch arm64 --show-bin-path)"
+swift build -c "$CONFIG" --arch arm64 --arch x86_64
+BIN_DIR="$(swift build -c "$CONFIG" --arch arm64 --arch x86_64 --show-bin-path)"
 
 APP="build/AudioPin.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/AudioPin" "$APP/Contents/MacOS/AudioPin"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # Ad-hoc signature ("-") is enough for a personal, non-App Store app.

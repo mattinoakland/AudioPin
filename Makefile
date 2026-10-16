@@ -1,7 +1,7 @@
 APP = build/AudioPin.app
 INSTALL_DIR = /Applications
 
-.PHONY: build run install uninstall stop clean logs
+.PHONY: build run install uninstall stop clean logs dist
 
 build:
 	./build.sh release
@@ -23,6 +23,13 @@ stop:
 
 clean:
 	rm -rf .build build
+
+# Zip the app for sending to someone else (see README, "Sharing it").
+dist: build
+	mkdir -p dist
+	rm -f dist/AudioPin.zip
+	ditto -c -k --keepParent $(APP) dist/AudioPin.zip
+	@echo "Wrote dist/AudioPin.zip"
 
 # Live log stream from the app (what Console.app would show).
 logs:
