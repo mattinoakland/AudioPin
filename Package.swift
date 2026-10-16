@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "AudioPin",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS("14.2")],
     targets: [
         .executableTarget(
             name: "AudioPin",

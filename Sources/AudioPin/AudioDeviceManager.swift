@@ -63,6 +63,9 @@ final class AudioDeviceManager {
         kAudioHardwarePropertyDefaultOutputDevice,
         kAudioHardwarePropertyDefaultInputDevice,
         kAudioHardwarePropertyDefaultSystemOutputDevice,
+        // Phase 2: fires when an app starts or stops using Core Audio, which
+        // is when a per-app route can first be built.
+        kAudioHardwarePropertyProcessObjectList,
     ]
 
     init() {

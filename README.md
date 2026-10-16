@@ -66,28 +66,55 @@ To change which device you want, pick it in the AudioPin menu rather than in
 System Settings. If you switch in System Settings while a pin is set, AudioPin
 switches it back.
 
+## App routing (Phase 2)
+
+Besides the system-wide pins, you can send one app's audio to a specific
+device. Open the menu, go to **App routing**, pick an app, and choose a device.
+"System default" removes the rule.
+
+- Rules are saved per app and come back when the app relaunches.
+- The submenu shows the live state: routing, waiting for the app to play
+  audio, device not connected, or an error.
+- Apps with a rule are listed first; apps that aren't running show
+  "(not running)".
+- Quitting AudioPin, removing a rule, or unplugging the target device tears the
+  route down, and the app goes back to playing through the system default.
+
+Routed audio has a small delay (a few milliseconds). That doesn't matter for
+music. Zoom isn't affected unless you route Zoom itself, so leave Zoom alone
+and pick its devices inside Zoom.
+
 ## Permissions
 
-Phase 1 needs no special permissions. Reading and setting default audio
-devices is allowed for any app.
+Pinning (Phase 1) needs no permission.
+
+App routing captures an app's audio, which macOS treats as system audio
+recording. The first time you route an app, macOS asks for permission. If a
+route shows "Couldn't tap this app", allow AudioPin under
+System Settings > Privacy & Security > Screen & System Audio Recording and pick
+the device again.
 
 ## How it works
 
 - `AudioDeviceManager.swift` wraps Core Audio: enumerates devices
   (`kAudioHardwarePropertyDevices`), reads names and UIDs, reads and sets the
   default output / input / system-output devices, and registers HAL property
-  listeners for device-list and default-device changes.
+  listeners for device-list, default-device, and process-list changes.
 - `AppState.swift` holds the pins (stored by device UID in `UserDefaults`, since
   device IDs change between reconnects), debounces HAL events by 300 ms, and
   applies the rule: if enforcing and a pinned device is connected but not the
-  default, set it as the default.
+  default, set it as the default. It also stores routing rules by bundle ID and
+  watches app launches and quits.
+- `ProcessTapRouter.swift` builds each route: a process tap on the app
+  (`CATapDescription` + `AudioHardwareCreateProcessTap`, muting the app's
+  normal output while tapped), a private aggregate device containing the tap
+  and the target device, and an IOProc that copies tapped audio to the output.
 - `MenuBarView.swift` is the dropdown. `AudioPinApp.swift` is the entry point.
 
-## Phase 2 (not built yet)
+## Known limits
 
-Per-app routing (send only Apple Music to a specific device) would use the
-macOS 14.2 process-tap API (`CATapDescription`, `AudioHardwareCreateProcessTap`)
-plus a private aggregate device. It needs the system audio recording
-permission, adds a small latency to the routed app's audio, and is a lot more
-code. Try Phase 1 first; for the headset-vs-speakers problem it is usually
-enough.
+- Channel mapping is simple: the tap is a stereo mixdown; on a multichannel
+  output only the first two channels carry audio.
+- Sample-rate differences between the tapped app and the target device are
+  handled by the aggregate device's drift compensation, which has been fine in
+  testing but is the first place to look if routed audio ever sounds wrong.

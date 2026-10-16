@@ -39,6 +39,26 @@ struct MenuBarView: View {
 
         Divider()
 
+        // Phase 2: one submenu per app. Apps with a rule are listed first so
+        // the ones you care about are easy to find.
+        Menu("App routing") {
+            let routed = state.routableApps.filter { state.routeRules[$0.bundleID] != nil }
+            let others = state.routableApps.filter { state.routeRules[$0.bundleID] == nil }
+
+            if routed.isEmpty {
+                Text("Pick an app below to send its audio to a specific device.")
+            } else {
+                Section("Routed") {
+                    ForEach(routed) { app in appMenu(app) }
+                }
+            }
+            Section("Running apps") {
+                ForEach(others) { app in appMenu(app) }
+            }
+        }
+
+        Divider()
+
         Toggle("Enforce pins", isOn: $state.enforcePins)
 
         Toggle("Launch at login", isOn: Binding(
@@ -54,6 +74,39 @@ struct MenuBarView: View {
         Button("Refresh devices") { state.refreshAndEnforce() }
         Button("Quit AudioPin") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
+    }
+
+    // MARK: - Per-app submenu
+
+    @ViewBuilder
+    private func appMenu(_ app: RoutableApp) -> some View {
+        let rule = state.routeRules[app.bundleID]
+        Menu(appTitle(app, rule: rule)) {
+            if let rule {
+                Text(state.routeStates[app.bundleID]?.text ?? rule.deviceName)
+                Divider()
+            }
+            Toggle("System default", isOn: Binding(
+                get: { rule == nil },
+                set: { on in if on { state.setRoute(for: app, to: nil) } }
+            ))
+            ForEach(state.outputDevices) { device in
+                Toggle(device.name, isOn: Binding(
+                    get: { rule?.deviceUID == device.uid },
+                    set: { on in state.setRoute(for: app, to: on ? device : nil) }
+                ))
+            }
+            if let rule, !state.outputDevices.contains(where: { $0.uid == rule.deviceUID }) {
+                Text("\(rule.deviceName) (not connected)")
+            }
+        }
+    }
+
+    private func appTitle(_ app: RoutableApp, rule: RouteRule?) -> String {
+        var title = app.name
+        if let rule { title += " → \(rule.deviceName)" }
+        if !app.isRunning { title += " (not running)" }
+        return title
     }
 
     private enum PinKind { case output, input }
