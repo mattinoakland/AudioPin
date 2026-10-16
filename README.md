@@ -48,7 +48,9 @@ section in that app.
 
 ## Using it
 
-Click the speaker icon in the menu bar:
+Click the pushpin icon in the menu bar. The panel stays open while you click
+around in it; it closes when you click anywhere else, press Escape, or click
+the icon again.
 
 - **Now playing through** shows the current default output and input.
 - **Pinned output** / **Pinned input** list every device. Check one to pin it.
@@ -144,9 +146,10 @@ the device again.
   (`CATapDescription` + `AudioHardwareCreateProcessTap`, muting the app's
   normal output while tapped), a private aggregate device containing the tap
   and the target device, and an IOProc that copies tapped audio to the output.
-- `MenuBarController.swift` is the status item and dropdown, built with AppKit
-  (`NSStatusItem` + `NSMenu`) so the volume sliders can live inside the menu.
-  The menu is rebuilt from `AppState` each time it opens.
+- `MenuBarController.swift` owns the status item and the panel: a borderless
+  `NSPanel` hung under the icon, closed by click-outside/Escape monitors.
+  `PanelView.swift` is the SwiftUI content inside it. A panel instead of a
+  menu is what lets it stay open after a click.
 - `AudioPinApp.swift` is the entry point (an `NSApplicationDelegate`).
 
 ## Known limits

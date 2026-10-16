@@ -70,6 +70,9 @@ final class AppState: ObservableObject {
     @Published private(set) var launchAtLoginMessage: String?
     @Published private(set) var routableApps: [RoutableApp] = []
     @Published private(set) var routeStates: [String: RouteState] = [:]
+    /// Hardware level of the pinned output / input (nil = no level control).
+    @Published private(set) var outputLevel: Float?
+    @Published private(set) var inputLevel: Float?
 
     // User choices. Setting any of these persists and re-applies pins.
     @Published var pinnedOutputUID: String? { didSet { persist(); applyPins() } }
@@ -177,6 +180,13 @@ final class AppState: ObservableObject {
         devices = manager.allDevices().sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         currentOutput = device(for: manager.defaultDeviceID(.output))
         currentInput = device(for: manager.defaultDeviceID(.input))
+        refreshLevels()
+    }
+
+    /// Re-read the pinned devices' hardware levels for the sliders.
+    func refreshLevels() {
+        outputLevel = outputVolume()
+        inputLevel = inputGain()
     }
 
     /// The core rule: if enforcing and a pinned device is present but not
@@ -207,6 +217,7 @@ final class AppState: ObservableObject {
             // Reflect what we just did without waiting for the HAL callback.
             currentOutput = device(for: manager.defaultDeviceID(.output))
             currentInput = device(for: manager.defaultDeviceID(.input))
+            refreshLevels()
         }
     }
 
@@ -241,11 +252,13 @@ final class AppState: ObservableObject {
     func setOutputVolume(_ value: Float) {
         guard let device = volumeOutputDevice else { return }
         manager.setVolume(of: device.id, scope: kAudioDevicePropertyScopeOutput, to: value)
+        outputLevel = value
     }
 
     func setInputGain(_ value: Float) {
         guard let device = volumeInputDevice else { return }
         manager.setVolume(of: device.id, scope: kAudioDevicePropertyScopeInput, to: value)
+        inputLevel = value
     }
 
     // MARK: - Per-app routing (Phase 2)

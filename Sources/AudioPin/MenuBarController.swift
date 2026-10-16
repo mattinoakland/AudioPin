@@ -1,30 +1,80 @@
 // MenuBarController.swift
-// The status item and its dropdown, built with AppKit (NSStatusItem + NSMenu).
+// The status item and the panel under it.
 //
-// AppKit rather than SwiftUI's MenuBarExtra because native menus can host
-// custom views, which is how the per-app volume sliders work. The menu is
-// rebuilt from AppState every time it opens (NSMenuDelegate), so it always
-// reflects the current devices, pins and routes.
+// The panel is a borderless NSPanel hosting PanelView (SwiftUI) instead of
+// an NSMenu, because a menu closes on every click. The panel stays open until
+// you click outside it, press Escape, or click the icon again, so you can pin
+// a device and adjust its slider in one go.
 
 import AppKit
 import Combine
+import SwiftUI
+import os
+
+private let log = Logger(subsystem: "com.mattmoglia.AudioPin", category: "MenuBarController")
 
 @MainActor
-final class MenuBarController: NSObject, NSMenuDelegate {
+final class MenuBarController: NSObject {
     private let state: AppState
     private let statusItem: NSStatusItem
-    private let menu = NSMenu()
+    private let panel: NSPanel
+    private let hosting: NSHostingView<AnyView>
     private var cancellable: AnyCancellable?
+    private var clickMonitors: [Any] = []
+
+    private let cornerRadius: CGFloat = 11
 
     init(state: AppState) {
         self.state = state
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+
+        panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 400),
+            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered, defer: false
+        )
+        hosting = NSHostingView(rootView: AnyView(EmptyView()))
         super.init()
 
-        menu.delegate = self
-        menu.autoenablesItems = false
-        statusItem.menu = menu
-        statusItem.button?.toolTip = "AudioPin"
+        // Window chrome: transparent window, material background, rounded.
+        panel.level = .popUpMenu
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+        panel.animationBehavior = .utilityWindow
+
+        let material = NSVisualEffectView()
+        material.material = .popover
+        material.state = .active
+        material.blendingMode = .behindWindow
+        material.wantsLayer = true
+        material.layer?.cornerRadius = cornerRadius
+        material.layer?.masksToBounds = true
+        material.layer?.borderWidth = 0.5
+        material.layer?.borderColor = NSColor.separatorColor.cgColor
+        panel.contentView = material
+
+        hosting.rootView = AnyView(
+            PanelView(onSizeChange: { [weak self] size in self?.resize(to: size) })
+                .environmentObject(state)
+        )
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        material.addSubview(hosting)
+        NSLayoutConstraint.activate([
+            hosting.leadingAnchor.constraint(equalTo: material.leadingAnchor),
+            hosting.trailingAnchor.constraint(equalTo: material.trailingAnchor),
+            hosting.topAnchor.constraint(equalTo: material.topAnchor),
+            hosting.bottomAnchor.constraint(equalTo: material.bottomAnchor),
+        ])
+
+        if let button = statusItem.button {
+            button.target = self
+            button.action = #selector(togglePanel(_:))
+            button.toolTip = "AudioPin"
+        }
         updateIcon()
 
         // Keep the icon in sync with "Enforce pins" (fires before the change,
@@ -43,230 +93,88 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         statusItem.button?.image = image
     }
 
-    // MARK: - NSMenuDelegate
+    // MARK: - Open / close
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        guard menu === self.menu else { return }
+    @objc private func togglePanel(_ sender: Any?) {
+        if panel.isVisible { close() } else { open() }
+    }
+
+    private func open() {
+        guard let button = statusItem.button, let buttonWindow = button.window else { return }
         state.refreshAndEnforce()
-        rebuild()
+
+        // Size to the SwiftUI content, then hang the panel under the icon,
+        // centered on it and kept inside the screen.
+        hosting.layoutSubtreeIfNeeded()
+        let size = hosting.fittingSize
+
+        // Where the icon is, in screen coordinates. If the status bar window
+        // reports something odd, fall back to the mouse (the user just
+        // clicked the icon, so the pointer is on it).
+        var anchor = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { $0.frame.contains(mouse) }
+            ?? buttonWindow.screen ?? NSScreen.main
+        if let screen, !screen.frame.intersects(anchor) {
+            log.info("Status item rect \(NSStringFromRect(anchor), privacy: .public) is off its screen; using mouse location")
+            anchor = NSRect(x: mouse.x - 11, y: screen.visibleFrame.maxY, width: 22, height: screen.frame.maxY - screen.visibleFrame.maxY)
+        }
+        let visible = screen?.visibleFrame ?? anchor
+        var x = anchor.midX - size.width / 2
+        x = min(max(x, visible.minX + 8), visible.maxX - size.width - 8)
+        let y = anchor.minY - size.height - 4
+        log.info("Panel at \(x) \(y) size \(size.width)x\(size.height); anchor \(NSStringFromRect(anchor), privacy: .public)")
+        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+
+        panel.makeKeyAndOrderFront(nil)
+        button.highlight(true)
+        installClickMonitors()
     }
 
-    // MARK: - Building the menu
+    private func close() {
+        removeClickMonitors()
+        panel.orderOut(nil)
+        statusItem.button?.highlight(false)
+    }
 
-    private func rebuild() {
-        menu.removeAllItems()
+    /// Grow or shrink the panel in place (keeping its top edge) when the
+    /// content changes, e.g. a new routed app adds rows.
+    private func resize(to size: CGSize) {
+        guard panel.isVisible, size.height > 0 else { return }
+        var frame = panel.frame
+        guard abs(frame.height - size.height) > 0.5 || abs(frame.width - size.width) > 0.5 else { return }
+        frame.origin.y = frame.maxY - size.height
+        frame.size = size
+        panel.setFrame(frame, display: true)
+    }
 
-        menu.addItem(.sectionHeader(title: "Now playing through"))
-        menu.addItem(info("Output: \(state.currentOutput?.name ?? "Unknown")"))
-        menu.addItem(info("Input: \(state.currentInput?.name ?? "Unknown")"))
-        menu.addItem(.separator())
-
-        menu.addItem(.sectionHeader(title: "Pinned output"))
-        for device in state.outputDevices {
-            let pinned = state.pinnedOutputUID == device.uid
-            menu.addItem(action(device.name, checked: pinned) { [state] in
-                state.pinOutput(pinned ? nil : device)
-            })
+    /// Close on any click outside the panel (in this app or any other) and
+    /// on Escape. Clicking the status item itself is handled by the toggle.
+    private func installClickMonitors() {
+        removeClickMonitors()
+        let masks: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: masks, handler: { [weak self] _ in
+            Task { @MainActor in self?.close() }
+        }) {
+            clickMonitors.append(global)
         }
-        if let name = state.pinnedOutputName, state.pinnedOutputUID != nil, !state.pinnedOutputConnected {
-            menu.addItem(info("\(name) (not connected)"))
-        }
-        if state.pinnedOutputUID != nil {
-            menu.addItem(action("Clear output pin") { [state] in state.pinOutput(nil) })
-        }
-        menu.addItem(levelSlider(
-            device: state.volumeOutputDevice, value: state.outputVolume(), symbol: "speaker.wave.2",
-            label: "Volume"
-        ) { [state] in state.setOutputVolume(Float($0)) })
-        menu.addItem(.separator())
-
-        menu.addItem(.sectionHeader(title: "Pinned input"))
-        for device in state.inputDevices {
-            let pinned = state.pinnedInputUID == device.uid
-            menu.addItem(action(device.name, checked: pinned) { [state] in
-                state.pinInput(pinned ? nil : device)
-            })
-        }
-        if let name = state.pinnedInputName, state.pinnedInputUID != nil, !state.pinnedInputConnected {
-            menu.addItem(info("\(name) (not connected)"))
-        }
-        if state.pinnedInputUID != nil {
-            menu.addItem(action("Clear input pin") { [state] in state.pinInput(nil) })
-        }
-        menu.addItem(levelSlider(
-            device: state.volumeInputDevice, value: state.inputGain(), symbol: "mic",
-            label: "Gain"
-        ) { [state] in state.setInputGain(Float($0)) })
-        menu.addItem(.separator())
-
-        // Routed apps live in the main menu, each with its volume slider right
-        // under it, so changing a level is two clicks. The row's submenu holds
-        // the device choice.
-        let routed = state.routableApps.filter { state.routeRules[$0.bundleID] != nil }
-        if !routed.isEmpty {
-            menu.addItem(.sectionHeader(title: "Routed apps"))
-            for app in routed {
-                menu.addItem(appItem(app))
-                if let rule = state.routeRules[app.bundleID] {
-                    let sliderItem = NSMenuItem()
-                    sliderItem.view = VolumeSliderView(value: rule.volume, symbol: "speaker.wave.2") { [state] value in
-                        state.setVolume(for: app.bundleID, value)
-                    }
-                    menu.addItem(sliderItem)
-                }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: masks.union(.keyDown), handler: { [weak self] event in
+            guard let self else { return event }
+            if event.type == .keyDown {
+                if event.keyCode == 53 { self.close(); return nil }   // Escape
+                return event
             }
-            menu.addItem(.separator())
+            if event.window !== self.panel, event.window !== self.statusItem.button?.window {
+                self.close()
+            }
+            return event
+        }) {
+            clickMonitors.append(local)
         }
-
-        let routing = NSMenuItem(title: "Route an app", action: nil, keyEquivalent: "")
-        routing.submenu = routingMenu()
-        menu.addItem(routing)
-        menu.addItem(.separator())
-
-        menu.addItem(action("Enforce pins", checked: state.enforcePins) { [state] in
-            state.enforcePins.toggle()
-        })
-        menu.addItem(action("Launch at login", checked: state.launchAtLogin) { [state] in
-            state.setLaunchAtLogin(!state.launchAtLogin)
-        })
-        if let message = state.launchAtLoginMessage {
-            menu.addItem(info(message))
-        }
-        menu.addItem(.separator())
-
-        menu.addItem(action("Refresh devices") { [state] in state.refreshAndEnforce() })
-        menu.addItem(action("Quit AudioPin", keyEquivalent: "q") { NSApplication.shared.terminate(nil) })
     }
 
-    /// The "Route an app" submenu: running apps that aren't routed yet.
-    private func routingMenu() -> NSMenu {
-        let submenu = NSMenu()
-        submenu.autoenablesItems = false
-        let others = state.routableApps.filter { state.routeRules[$0.bundleID] == nil }
-        submenu.addItem(.sectionHeader(title: "Running apps"))
-        for app in others { submenu.addItem(appItem(app)) }
-        return submenu
-    }
-
-    /// One app row with its own submenu: status, device choice, volume.
-    private func appItem(_ app: RoutableApp) -> NSMenuItem {
-        let rule = state.routeRules[app.bundleID]
-
-        var title = app.name
-        if let rule { title += " → \(rule.deviceName)" }
-        if !app.isRunning { title += " (not running)" }
-
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.image = app.icon
-
-        let submenu = NSMenu()
-        submenu.autoenablesItems = false
-
-        if let rule {
-            submenu.addItem(info(state.routeStates[app.bundleID]?.text ?? rule.deviceName))
-            submenu.addItem(.separator())
-        }
-
-        submenu.addItem(action(rule == nil ? "System default" : "Stop routing (system default)", checked: rule == nil) { [state] in
-            state.setRoute(for: app, to: nil)
-        })
-        submenu.addItem(.separator())
-        for device in state.outputDevices {
-            submenu.addItem(action(device.name, checked: rule?.deviceUID == device.uid) { [state] in
-                state.setRoute(for: app, to: device)
-            })
-        }
-        if let rule, !state.outputDevices.contains(where: { $0.uid == rule.deviceUID }) {
-            submenu.addItem(info("\(rule.deviceName) (not connected)"))
-        }
-
-        item.submenu = submenu
-        return item
-    }
-
-    /// A slider row for a device's hardware level, or a note when the device
-    /// has no software volume control (HDMI displays, some USB interfaces).
-    private func levelSlider(device: AudioDevice?, value: Float?, symbol: String, label: String,
-                             onChange: @escaping (Double) -> Void) -> NSMenuItem {
-        guard let device else { return info("\(label): no device") }
-        guard let value else { return info("\(device.name) has no \(label.lowercased()) control") }
-        let item = NSMenuItem()
-        item.view = VolumeSliderView(value: Double(value), symbol: symbol, onChange: onChange)
-        return item
-    }
-
-    // MARK: - Item helpers
-
-    private func info(_ title: String) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        return item
-    }
-
-    private func action(_ title: String, checked: Bool = false, keyEquivalent: String = "", handler: @escaping () -> Void) -> NSMenuItem {
-        let item = ClosureMenuItem(title: title, keyEquivalent: keyEquivalent, handler: handler)
-        item.state = checked ? .on : .off
-        return item
-    }
-}
-
-/// An NSMenuItem that runs a closure instead of a target/selector.
-private final class ClosureMenuItem: NSMenuItem {
-    private let handler: () -> Void
-
-    init(title: String, keyEquivalent: String, handler: @escaping () -> Void) {
-        self.handler = handler
-        super.init(title: title, action: #selector(fire), keyEquivalent: keyEquivalent)
-        target = self
-    }
-
-    required init(coder: NSCoder) { fatalError("not used") }
-
-    @objc private func fire() { handler() }
-}
-
-/// A menu row with a speaker icon, a slider, and a percentage label.
-/// Dragging the slider changes the routed app's volume live.
-private final class VolumeSliderView: NSView {
-    private let slider = NSSlider()
-    private let percent = NSTextField(labelWithString: "")
-    private let onChange: (Double) -> Void
-
-    init(value: Double, symbol: String, onChange: @escaping (Double) -> Void) {
-        self.onChange = onChange
-        super.init(frame: NSRect(x: 0, y: 0, width: 250, height: 30))
-
-        let icon = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
-        icon.frame = NSRect(x: 24, y: 7, width: 16, height: 16)
-        icon.contentTintColor = .secondaryLabelColor
-        addSubview(icon)
-
-        slider.frame = NSRect(x: 46, y: 5, width: 150, height: 20)
-        slider.minValue = 0
-        slider.maxValue = 1
-        slider.doubleValue = value
-        slider.isContinuous = true
-        slider.controlSize = .small
-        slider.target = self
-        slider.action = #selector(changed)
-        addSubview(slider)
-
-        percent.frame = NSRect(x: 200, y: 7, width: 44, height: 16)
-        percent.alignment = .right
-        percent.font = .menuFont(ofSize: NSFont.smallSystemFontSize)
-        percent.textColor = .secondaryLabelColor
-        addSubview(percent)
-        updateLabel()
-    }
-
-    required init?(coder: NSCoder) { fatalError("not used") }
-
-    @objc private func changed() {
-        updateLabel()
-        onChange(slider.doubleValue)
-    }
-
-    private func updateLabel() {
-        percent.stringValue = "\(Int((slider.doubleValue * 100).rounded()))%"
+    private func removeClickMonitors() {
+        for monitor in clickMonitors { NSEvent.removeMonitor(monitor) }
+        clickMonitors.removeAll()
     }
 }
