@@ -2,6 +2,8 @@
 
 A tiny macOS menu bar app that keeps your audio devices where you put them.
 
+![AudioPin panel under the menu bar](docs/hero.png)
+
 **The problem it solves:** macOS switches the default output to a USB headset
 whenever it's plugged in, which moves your music to the headset. AudioPin lets
 you *pin* an output device (MacBook Pro Speakers) and an input device (the

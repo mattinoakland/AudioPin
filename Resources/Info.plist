@@ -21,17 +21,15 @@
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>202610181116</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.2</string>
-	<!-- Menu bar only: no Dock icon, no main window. -->
 	<key>LSUIElement</key>
 	<true/>
-	<key>NSHighResolutionCapable</key>
-	<true/>
-	<!-- Phase 2: process taps count as system audio recording. -->
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>AudioPin needs to capture an app's audio to send it to the output device you chose for that app.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>
