@@ -73,6 +73,11 @@ final class AppState: ObservableObject {
     /// Hardware level of the pinned output / input (nil = no level control).
     @Published private(set) var outputLevel: Float?
     @Published private(set) var inputLevel: Float?
+    /// A newer version the server told us about, if any.
+    @Published private(set) var availableUpdate: UpdateInfo?
+    @Published var sendUsageStats: Bool {
+        didSet { telemetry.isEnabled = sendUsageStats }
+    }
 
     // User choices. Setting any of these persists and re-applies pins.
     @Published var pinnedOutputUID: String? { didSet { persist(); applyPins() } }
@@ -93,6 +98,7 @@ final class AppState: ObservableObject {
 
     private let manager = AudioDeviceManager()
     private let router = ProcessTapRouter()
+    private let telemetry = Telemetry()
     private let defaults = UserDefaults.standard
     private var pendingRefresh: DispatchWorkItem?
     private let debounce: TimeInterval = 0.3
@@ -120,6 +126,8 @@ final class AppState: ObservableObject {
            let rules = try? JSONDecoder().decode([String: RouteRule].self, from: data) {
             routeRules = rules
         }
+        sendUsageStats = telemetry.isEnabled
+        telemetry.onResult = { [weak self] update in self?.availableUpdate = update }
 
         manager.onChange = { [weak self] in
             // Called on the HAL queue; hop to main and debounce.
@@ -142,6 +150,7 @@ final class AppState: ObservableObject {
 
         refreshLoginItemStatus()
         refreshAndEnforce()
+        telemetry.start()
         log.info("AudioPin started. enforce=\(self.enforcePins) output=\(self.pinnedOutputUID ?? "none", privacy: .public) input=\(self.pinnedInputUID ?? "none", privacy: .public) rules=\(self.routeRules.count)")
     }
 

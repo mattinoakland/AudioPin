@@ -102,28 +102,52 @@ Routed audio has a small delay (a few milliseconds). That doesn't matter for
 music. Zoom isn't affected unless you route Zoom itself, so leave Zoom alone
 and pick its devices inside Zoom.
 
-## Sharing it
+## Download
+
+Releases are at https://mattmoglia.com/audiopin and on this repo's Releases
+page. Drag `AudioPin.app` to Applications and open it. Releases are signed with
+a Developer ID and notarized by Apple, so there's no "unidentified developer"
+step. Routing an app asks once for the system audio recording permission.
+
+## Privacy
+
+AudioPin sends one small anonymous ping when it starts and once a day: a
+random install ID, the app version, the macOS version, the CPU type, and the
+Mac's region setting (a two-letter country code). That's how Matt knows
+roughly how many people use it and where, and it's how the app learns a newer
+version exists. Nothing about your devices, apps, or audio is sent, ever.
+Turn off **Send anonymous usage stats** in the panel to stop the ping; the
+update check then runs without an install ID.
+
+## Releasing (for Matt)
+
+One-time setup:
+
+1. In Xcode > Settings > Accounts, select your Apple ID and team, click
+   **Manage Certificates**, then **+** > **Developer ID Application**. That
+   installs the signing certificate in your keychain.
+2. Make an app-specific password at https://account.apple.com (Sign-In and
+   Security > App-Specific Passwords), then store it for the notary tool:
+
+   ```bash
+   xcrun notarytool store-credentials AudioPin --apple-id YOUR_APPLE_ID --team-id YOUR_TEAM_ID --password THE_APP_SPECIFIC_PASSWORD
+   ```
+
+   Your team ID is on https://developer.apple.com/account under Membership.
+
+Every release after that is one command:
 
 ```bash
-make dist
+make release VERSION=1.1 NOTES="What changed"
 ```
 
-That writes `dist/AudioPin.zip`, a universal build (Apple Silicon and Intel)
-you can send to anyone on macOS 14.2 or later. The app isn't signed with an
-Apple Developer ID or notarized, so the first launch on another Mac is blocked
-by Gatekeeper. Tell your friend to:
+It stamps the version, builds a universal app, signs it with the Developer ID
+and hardened runtime, sends it to Apple for notarization (a few minutes),
+staples the ticket, zips it, tags the commit, and publishes a GitHub release
+with the zip attached. The download page and the in-app update banner both
+read the latest GitHub release, so publishing is the only step.
 
-1. Unzip it and drag `AudioPin.app` into Applications.
-2. Double-click it once; macOS will refuse and say it can't verify the app.
-3. Open System Settings > Privacy & Security, scroll down, and click
-   **Open Anyway** next to the AudioPin message, then confirm.
-
-After that it opens normally. Routing an app will also ask them for the
-system audio recording permission, same as it did for you.
-
-If you ever want to skip the "Open Anyway" dance, you'd sign with a Developer
-ID certificate and notarize the app, which needs an Apple Developer account
-(US$99 per year).
+For a quick unsigned build on your own Mac, `make run` still works.
 
 ## Permissions
 

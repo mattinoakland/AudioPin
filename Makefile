@@ -1,7 +1,7 @@
 APP = build/AudioPin.app
 INSTALL_DIR = /Applications
 
-.PHONY: build run install uninstall stop clean logs dist
+.PHONY: build run install uninstall stop clean logs dist release
 
 build:
 	./build.sh release
@@ -30,6 +30,10 @@ dist: build
 	rm -f dist/AudioPin.zip
 	ditto -c -k --keepParent $(APP) dist/AudioPin.zip
 	@echo "Wrote dist/AudioPin.zip"
+
+# Signed, notarized, published release: make release VERSION=1.1 NOTES="..."
+release:
+	./release.sh $(VERSION) "$(NOTES)"
 
 # Live log stream from the app (what Console.app would show).
 logs:

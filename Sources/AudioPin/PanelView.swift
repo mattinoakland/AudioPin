@@ -12,6 +12,11 @@ struct PanelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let update = state.availableUpdate {
+                UpdateRow(update: update)
+                divider
+            }
+
             section("Now playing through") {
                 InfoRow("Output: \(state.currentOutput?.name ?? "Unknown")")
                 InfoRow("Input: \(state.currentInput?.name ?? "Unknown")")
@@ -61,14 +66,33 @@ struct PanelView: View {
                 if let message = state.launchAtLoginMessage {
                     InfoRow(message)
                 }
+                CheckRow("Send anonymous usage stats", checked: state.sendUsageStats) {
+                    state.sendUsageStats.toggle()
+                }
             }
             divider
 
             section(nil) {
+                ActionRow("Buy me a coffee", symbol: "cup.and.saucer") { open(Links.coffee) }
+                ActionRow("Send feedback", symbol: "envelope") { open(Links.feedbackMailto) }
                 ActionRow("Refresh devices") { state.refreshAndEnforce() }
                 ActionRow("Quit AudioPin", shortcut: "⌘Q") { NSApplication.shared.terminate(nil) }
                     .keyboardShortcut("q")
             }
+
+            // Credit line.
+            Button { open(Links.site) } label: {
+                HStack(spacing: 4) {
+                    Text("AudioPin \(AppInfo.version) · solo-developed by")
+                    Text("mattmoglia.com").underline()
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+            .padding(.bottom, 2)
         }
         .padding(.vertical, 6)
         .frame(width: 320)
@@ -123,6 +147,10 @@ struct PanelView: View {
             .padding(.vertical, 4)
             .foregroundStyle(.primary)
         }
+    }
+
+    private func open(_ url: URL) {
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - Layout helpers
@@ -185,11 +213,13 @@ private struct CheckRow: View {
 /// A plain command row (Refresh, Quit).
 private struct ActionRow: View {
     let title: String
+    var symbol: String? = nil
     var shortcut: String? = nil
     let action: () -> Void
 
-    init(_ title: String, shortcut: String? = nil, action: @escaping () -> Void) {
+    init(_ title: String, symbol: String? = nil, shortcut: String? = nil, action: @escaping () -> Void) {
         self.title = title
+        self.symbol = symbol
         self.shortcut = shortcut
         self.action = action
     }
@@ -197,7 +227,11 @@ private struct ActionRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Color.clear.frame(width: 16)
+                if let symbol {
+                    Image(systemName: symbol).frame(width: 16)
+                } else {
+                    Color.clear.frame(width: 16)
+                }
                 Text(title)
                 Spacer()
                 if let shortcut {
@@ -207,6 +241,30 @@ private struct ActionRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(RowButtonStyle())
+    }
+}
+
+/// "Version X is available" with a Download button, shown at the top.
+private struct UpdateRow: View {
+    let update: UpdateInfo
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.down.circle.fill")
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("AudioPin \(update.version) is available")
+                if let notes = update.notes, !notes.isEmpty {
+                    Text(notes).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+            Spacer()
+            Button("Download") { NSWorkspace.shared.open(update.downloadURL) }
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
     }
 }
 
