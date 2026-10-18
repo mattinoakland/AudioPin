@@ -14,8 +14,11 @@
 // Tearing a route down undoes those three in reverse, which also unmutes the
 // app's normal output, so quitting AudioPin never leaves an app silent.
 //
-// This class is not thread-safe; AppState drives it from the main actor.
-// The IOProc block runs on its own queue and touches only its buffers.
+// All Core Audio calls happen on `workQueue`, a serial background queue, so a
+// slow or wedged coreaudiod can never freeze the menu bar panel. `apply` is
+// asynchronous and reports back on the main thread; `teardownAll` is
+// synchronous because it runs right before the process exits.
+// The IOProc block runs on its own real-time queue and touches only buffers.
 
 import Accelerate
 import CoreAudio
@@ -78,10 +81,11 @@ final class ProcessTapRouter {
 
     private let systemObject = AudioObjectID(kAudioObjectSystemObject)
     private let ioQueue = DispatchQueue(label: "com.mattmoglia.AudioPin.io", qos: .userInteractive)
-    private var routes: [String: Route] = [:]          // keyed by bundle ID
-    private(set) var states: [String: RouteState] = [:] // keyed by bundle ID
+    private let workQueue = DispatchQueue(label: "com.mattmoglia.AudioPin.router", qos: .userInitiated)
+    private var routes: [String: Route] = [:]          // keyed by bundle ID; workQueue only
+    private var states: [String: RouteState] = [:]     // keyed by bundle ID; workQueue only
+    private var applyGeneration = 0
 
-    deinit { teardownAll() }
 
     // MARK: - Public API
 
@@ -93,15 +97,42 @@ final class ProcessTapRouter {
         let volume: Float          // 0...1, applied to the copied audio
     }
 
-    /// Change a live route's volume without rebuilding it.
-    func setGain(bundleID: String, _ volume: Float) {
-        routes[bundleID]?.gain.value = max(0, min(1, volume))
-    }
-
     /// Make reality match `requests`: build routes that are missing, rebuild
     /// routes whose app relaunched or whose device changed, and tear down
     /// routes that no longer have a request. Idempotent and cheap to call.
-    func apply(_ requests: [Request]) {
+    /// Runs in the background; `completion` gets the new states on main.
+    /// If several calls pile up, only the newest one's result is reported.
+    func apply(_ requests: [Request], completion: @escaping ([String: RouteState]) -> Void) {
+        applyGeneration += 1
+        let generation = applyGeneration
+        workQueue.async { [self] in
+            applyNow(requests)
+            let snapshot = states
+            DispatchQueue.main.async {
+                guard generation == self.applyGeneration else { return }
+                completion(snapshot)
+            }
+        }
+    }
+
+    /// Change a live route's volume without rebuilding it.
+    func setGain(bundleID: String, _ volume: Float) {
+        workQueue.async { [self] in
+            routes[bundleID]?.gain.value = max(0, min(1, volume))
+        }
+    }
+
+    /// Destroy every route. Call before the app exits. Blocks until done.
+    func teardownAll() {
+        workQueue.sync { [self] in
+            for bundleID in Array(routes.keys) {
+                teardown(bundleID: bundleID)
+            }
+            states.removeAll()
+        }
+    }
+
+    private func applyNow(_ requests: [Request]) {
         let wanted = Set(requests.map(\.bundleID))
 
         // Tear down anything no longer requested.
@@ -135,14 +166,6 @@ final class ProcessTapRouter {
 
             states[request.bundleID] = build(bundleID: request.bundleID, pid: pid, device: device, volume: request.volume)
         }
-    }
-
-    /// Destroy every route. Call before the app exits.
-    func teardownAll() {
-        for bundleID in Array(routes.keys) {
-            teardown(bundleID: bundleID)
-        }
-        states.removeAll()
     }
 
     // MARK: - Building a route

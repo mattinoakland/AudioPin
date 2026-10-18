@@ -103,6 +103,7 @@ final class AppState: ObservableObject {
     private var pendingRefresh: DispatchWorkItem?
     private let debounce: TimeInterval = 0.3
     private var observers: [NSObjectProtocol] = []
+    private var signalSources: [DispatchSourceSignal] = []
     /// System output seen on the last route pass, to notice when it moves.
     private var lastSystemOutputUID: String?
 
@@ -145,8 +146,17 @@ final class AppState: ObservableObject {
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.router.teardownAll() }
+            MainActor.assumeIsolated { self?.router.teardownAll() }
         })
+        // A plain `kill` (SIGTERM) or Ctrl-C bypasses willTerminate; turn
+        // them into a normal quit so routes still get torn down.
+        for sig in [SIGTERM, SIGINT] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler { NSApplication.shared.terminate(nil) }
+            source.resume()
+            signalSources.append(source)
+        }
 
         refreshLoginItemStatus()
         refreshAndEnforce()
@@ -339,7 +349,7 @@ final class AppState: ObservableObject {
         lastSystemOutputUID = currentOutput?.uid
         var opened: [String: Float] = [:]   // device UID -> level it had before
         for (bundleID, rule) in routeRules {
-            guard router.states[bundleID]?.isActive != true || outputChanged,
+            guard routeStates[bundleID]?.isActive != true || outputChanged,
                   opened[rule.deviceUID] == nil,
                   let device = devices.first(where: { $0.uid == rule.deviceUID && $0.hasOutput }),
                   device.uid != currentOutput?.uid,
@@ -369,8 +379,9 @@ final class AppState: ObservableObject {
                 volume: Float(rule.volume)
             )
         }
-        router.apply(requests)
-        routeStates = router.states
+        router.apply(requests) { [weak self] states in
+            self?.routeStates = states
+        }
     }
 
     private func persist() {

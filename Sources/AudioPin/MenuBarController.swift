@@ -18,7 +18,9 @@ final class MenuBarController: NSObject {
     private let state: AppState
     private let statusItem: NSStatusItem
     private let panel: NSPanel
-    private let hosting: NSHostingView<AnyView>
+    private let hostingController: NSHostingController<AnyView>
+    private var hosting: NSView { hostingController.view }
+    private let panelWidth: CGFloat = 320
     private var cancellable: AnyCancellable?
     private var clickMonitors: [Any] = []
 
@@ -33,7 +35,10 @@ final class MenuBarController: NSObject {
             styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered, defer: false
         )
-        hosting = NSHostingView(rootView: AnyView(EmptyView()))
+        hostingController = NSHostingController(rootView: AnyView(EmptyView()))
+        // The controller never touches the window's size; open() and
+        // resize(to:) place and size the panel by hand.
+        hostingController.sizingOptions = []
         super.init()
 
         // Window chrome: transparent window, material background, rounded.
@@ -57,7 +62,7 @@ final class MenuBarController: NSObject {
         material.layer?.borderColor = NSColor.separatorColor.cgColor
         panel.contentView = material
 
-        hosting.rootView = AnyView(
+        hostingController.rootView = AnyView(
             PanelView(onSizeChange: { [weak self] size in self?.resize(to: size) })
                 .environmentObject(state)
         )
@@ -103,30 +108,46 @@ final class MenuBarController: NSObject {
         guard let button = statusItem.button, let buttonWindow = button.window else { return }
         state.refreshAndEnforce()
 
-        // Size to the SwiftUI content, then hang the panel under the icon,
-        // centered on it and kept inside the screen.
-        hosting.layoutSubtreeIfNeeded()
-        let size = hosting.fittingSize
+        // Ask SwiftUI how tall the content is at the panel's width, then hang
+        // the panel under the icon, centered on it and kept inside the screen.
+        var size = hostingController.sizeThatFits(in: NSSize(width: panelWidth, height: 10_000))
+        size.width = panelWidth
+        if size.height < 50 {
+            // Not measured yet (first open can race layout): start with a
+            // sensible height and let the SwiftUI size report correct it.
+            log.info("Content not measured yet (\(size.height)); using placeholder height")
+            size.height = 600
+        }
 
-        // Where the icon is, in screen coordinates. If the status bar window
-        // reports something odd, fall back to the mouse (the user just
-        // clicked the icon, so the pointer is on it).
-        var anchor = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        // Where to hang the panel. The user just clicked the icon, so the
+        // mouse is on it: anchor to the mouse's column in the menu bar of the
+        // screen the mouse is on. (The status bar window's own coordinates
+        // have been wrong right after launch on multi-display setups.)
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) }
             ?? buttonWindow.screen ?? NSScreen.main
-        if let screen, !screen.frame.intersects(anchor) {
-            log.info("Status item rect \(NSStringFromRect(anchor), privacy: .public) is off its screen; using mouse location")
-            anchor = NSRect(x: mouse.x - 11, y: screen.visibleFrame.maxY, width: 22, height: screen.frame.maxY - screen.visibleFrame.maxY)
+        var anchor: NSRect
+        if let screen {
+            let menuBarBottom = screen.visibleFrame.maxY
+            anchor = NSRect(x: mouse.x - 11, y: menuBarBottom, width: 22, height: screen.frame.maxY - menuBarBottom)
+        } else {
+            anchor = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
         }
         let visible = screen?.visibleFrame ?? anchor
         var x = anchor.midX - size.width / 2
         x = min(max(x, visible.minX + 8), visible.maxX - size.width - 8)
         let y = anchor.minY - size.height - 4
         log.info("Panel at \(x) \(y) size \(size.width)x\(size.height); anchor \(NSStringFromRect(anchor), privacy: .public)")
-        panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
-
+        let frame = NSRect(x: x, y: y, width: size.width, height: size.height)
+        panel.setFrame(frame, display: true)
         panel.makeKeyAndOrderFront(nil)
+        // Belt and braces: if anything nudged the window while it was being
+        // shown for the first time, put it back where it belongs.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.panel.isVisible, abs(self.panel.frame.origin.x - frame.origin.x) > 1 || abs(self.panel.frame.origin.y - frame.origin.y) > 1 else { return }
+            log.info("Panel moved to \(NSStringFromRect(self.panel.frame), privacy: .public) on show; restoring")
+            self.panel.setFrameOrigin(frame.origin)
+        }
         button.highlight(true)
         installClickMonitors()
     }
@@ -142,9 +163,9 @@ final class MenuBarController: NSObject {
     private func resize(to size: CGSize) {
         guard panel.isVisible, size.height > 0 else { return }
         var frame = panel.frame
-        guard abs(frame.height - size.height) > 0.5 || abs(frame.width - size.width) > 0.5 else { return }
+        guard abs(frame.height - size.height) > 0.5 else { return }
         frame.origin.y = frame.maxY - size.height
-        frame.size = size
+        frame.size = NSSize(width: panelWidth, height: size.height)
         panel.setFrame(frame, display: true)
     }
 

@@ -96,6 +96,8 @@ struct PanelView: View {
         }
         .padding(.vertical, 6)
         .frame(width: 320)
+        // Take the content's natural height, whatever height is proposed.
+        .fixedSize(horizontal: false, vertical: true)
         .background(GeometryReader { proxy in
             Color.clear.preference(key: PanelSizeKey.self, value: proxy.size)
         })
@@ -230,7 +232,7 @@ private struct ActionRow: View {
                 if let symbol {
                     Image(systemName: symbol).frame(width: 16)
                 } else {
-                    Color.clear.frame(width: 16)
+                    Color.clear.frame(width: 16, height: 1)
                 }
                 Text(title)
                 Spacer()
@@ -275,7 +277,7 @@ private struct InfoRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Color.clear.frame(width: 16)
+            Color.clear.frame(width: 16, height: 1)
             Text(text).foregroundStyle(.secondary)
             Spacer()
         }
@@ -332,7 +334,7 @@ private struct RoutedAppRow: View {
                 if let icon = app.icon {
                     Image(nsImage: icon).frame(width: 16)
                 } else {
-                    Color.clear.frame(width: 16)
+                    Color.clear.frame(width: 16, height: 1)
                 }
                 Text(app.name + (app.isRunning ? "" : " (not running)"))
                 Spacer()
@@ -342,7 +344,7 @@ private struct RoutedAppRow: View {
             // when the route isn't actually working.
             if let status = state.routeStates[app.bundleID], !status.isActive {
                 HStack(spacing: 8) {
-                    Color.clear.frame(width: 16)
+                    Color.clear.frame(width: 16, height: 1)
                     Text(status.text)
                         .font(.caption)
                         .foregroundStyle(.secondary)
