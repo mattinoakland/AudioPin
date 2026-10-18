@@ -8,8 +8,8 @@ enum Links {
     static let site = URL(string: "https://mattmoglia.com")!
     /// The app's own page: download, install help, release notes.
     static let appPage = URL(string: "https://mattmoglia.com/audiopin")!
-    /// Stripe payment link for "Buy me a coffee". No middleman.
-    static let coffee = URL(string: "https://mattmoglia.com/audiopin/coffee")!
+    /// "Buy me a coffee": the tip box on the app's page (paid inline there).
+    static let coffee = URL(string: "https://mattmoglia.com/audiopin#coffee")!
     /// Feedback goes straight to Matt's inbox.
     static let feedbackEmail = "hi@mattmoglia.com"
     /// Anonymous usage ping + "is there a newer version" check (see Telemetry).
