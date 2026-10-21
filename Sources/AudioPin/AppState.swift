@@ -84,6 +84,9 @@ final class AppState: ObservableObject {
     @Published var pinnedInputUID: String?  { didSet { persist(); applyPins() } }
     @Published var enforcePins: Bool        { didSet { persist(); applyPins() } }
     @Published private(set) var routeRules: [String: RouteRule] = [:]
+    /// Volume an app had when its route was removed, so re-routing it later
+    /// starts there instead of at the default.
+    private var lastRouteVolumes: [String: Double] = [:]
 
     // Last-known names so the menu can say "Jabra (not connected)".
     @Published private(set) var pinnedOutputName: String?
@@ -114,6 +117,7 @@ final class AppState: ObservableObject {
         static let pinnedInputName = "pinnedInputName"
         static let enforcePins = "enforcePins"
         static let routeRules = "routeRules"
+        static let lastRouteVolumes = "lastRouteVolumes"
     }
 
     init() {
@@ -127,6 +131,7 @@ final class AppState: ObservableObject {
            let rules = try? JSONDecoder().decode([String: RouteRule].self, from: data) {
             routeRules = rules
         }
+        lastRouteVolumes = defaults.dictionary(forKey: Key.lastRouteVolumes) as? [String: Double] ?? [:]
         sendUsageStats = telemetry.isEnabled
         telemetry.onResult = { [weak self] update in self?.availableUpdate = update }
 
@@ -290,10 +295,14 @@ final class AppState: ObservableObject {
     /// the system default).
     func setRoute(for app: RoutableApp, to device: AudioDevice?) {
         if let device {
-            let volume = routeRules[app.bundleID]?.volume ?? 1
+            // A new route starts at half volume, never full: the target device
+            // may already be at 100%, and a surprise at full blast is the worst
+            // first impression. An app routed before comes back where you left it.
+            let volume = routeRules[app.bundleID]?.volume ?? lastRouteVolumes[app.bundleID] ?? 0.5
             routeRules[app.bundleID] = RouteRule(appName: app.name, deviceUID: device.uid, deviceName: device.name, volume: volume)
             log.info("Rule set: \(app.bundleID, privacy: .public) -> \(device.name, privacy: .public)")
         } else {
+            if let old = routeRules[app.bundleID] { lastRouteVolumes[app.bundleID] = old.volume }
             routeRules[app.bundleID] = nil
             log.info("Rule removed: \(app.bundleID, privacy: .public)")
         }
@@ -404,6 +413,7 @@ final class AppState: ObservableObject {
         if let data = try? JSONEncoder().encode(routeRules) {
             defaults.set(data, forKey: Key.routeRules)
         }
+        defaults.set(lastRouteVolumes, forKey: Key.lastRouteVolumes)
     }
 
     // MARK: - Launch at login (SMAppService)
