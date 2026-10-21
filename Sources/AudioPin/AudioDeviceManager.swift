@@ -208,6 +208,26 @@ final class AudioDeviceManager {
         return any
     }
 
+    /// Whether the device's output is muted (the mute key, or Sound settings).
+    func isMuted(_ deviceID: AudioDeviceID) -> Bool {
+        var address = Self.address(kAudioDevicePropertyMute, scope: kAudioDevicePropertyScopeOutput)
+        guard AudioObjectHasProperty(deviceID, &address) else { return false }
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        return AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &value) == noErr && value != 0
+    }
+
+    /// Clears the device's output mute. Returns true if it was muted and is now not.
+    @discardableResult
+    func unmute(_ deviceID: AudioDeviceID) -> Bool {
+        guard isMuted(deviceID) else { return false }
+        var address = Self.address(kAudioDevicePropertyMute, scope: kAudioDevicePropertyScopeOutput)
+        var value: UInt32 = 0
+        let status = AudioObjectSetPropertyData(deviceID, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &value)
+        if status != noErr { log.error("Unmute of device \(deviceID) failed: \(status)") }
+        return status == noErr
+    }
+
     // MARK: - Listeners
 
     private func startListening() {

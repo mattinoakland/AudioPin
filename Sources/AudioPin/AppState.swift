@@ -272,6 +272,8 @@ final class AppState: ObservableObject {
 
     func setOutputVolume(_ value: Float) {
         guard let device = volumeOutputDevice else { return }
+        // Dragging the slider up should always make sound: clear mute too.
+        if value > 0 { manager.unmute(device.id) }
         manager.setVolume(of: device.id, scope: kAudioDevicePropertyScopeOutput, to: value)
         outputLevel = value
     }
@@ -302,8 +304,11 @@ final class AppState: ObservableObject {
 
     /// Volume for a routed app, 0...1. Applied live; saved with the rule.
     func setVolume(for bundleID: String, _ volume: Double) {
-        guard routeRules[bundleID] != nil else { return }
+        guard let rule = routeRules[bundleID] else { return }
         let clamped = max(0, min(1, volume))
+        if clamped > 0, let device = devices.first(where: { $0.uid == rule.deviceUID }) {
+            manager.unmute(device.id)
+        }
         routeRules[bundleID]?.volume = clamped
         router.setGain(bundleID: bundleID, Float(clamped))
         persist()
@@ -352,8 +357,14 @@ final class AppState: ObservableObject {
             guard routeStates[bundleID]?.isActive != true || outputChanged,
                   opened[rule.deviceUID] == nil,
                   let device = devices.first(where: { $0.uid == rule.deviceUID && $0.hasOutput }),
-                  device.uid != currentOutput?.uid,
-                  let level = manager.volume(of: device.id, scope: kAudioDevicePropertyScopeOutput),
+                  device.uid != currentOutput?.uid
+            else { continue }
+            // A muted device plays nothing no matter what the sliders say. The
+            // mute key only ever meant the system output, so clear it here.
+            if manager.unmute(device.id) {
+                log.info("Unmuted \(device.name, privacy: .public) for route \(bundleID, privacy: .public)")
+            }
+            guard let level = manager.volume(of: device.id, scope: kAudioDevicePropertyScopeOutput),
                   level < 0.999
             else { continue }
             if manager.setVolume(of: device.id, scope: kAudioDevicePropertyScopeOutput, to: 1) {
