@@ -6,21 +6,26 @@
 //   1. A *process tap* on the app's Core Audio process object. The tap
 //      captures everything the app plays and (muteBehavior =
 //      .mutedWhenTapped) silences the app's normal output while the tap runs.
-//   2. A *private aggregate device* that contains the tap (as its input side)
-//      and the chosen output device (as its output side).
-//   3. An IOProc on that aggregate device that copies the tapped audio
-//      straight into the output buffers.
+//   2. A *private aggregate device* containing only the tap, with an IOProc
+//      that copies the captured audio into a ring buffer.
+//   3. A regular *output audio unit* (AUHAL) on the chosen device that pulls
+//      from the ring buffer. This is the same path any normal app uses, so the
+//      device gets its usual system processing (the MacBook speakers' tuning,
+//      spatial audio, and so on). Playing through the aggregate's own output
+//      side skipped that processing and sounded noticeably thinner.
 //
-// Tearing a route down undoes those three in reverse, which also unmutes the
+// Tearing a route down undoes all of that in reverse, which also unmutes the
 // app's normal output, so quitting AudioPin never leaves an app silent.
 //
 // All Core Audio calls happen on `workQueue`, a serial background queue, so a
 // slow or wedged coreaudiod can never freeze the menu bar panel. `apply` is
 // asynchronous and reports back on the main thread; `teardownAll` is
 // synchronous because it runs right before the process exits.
-// The IOProc block runs on its own real-time queue and touches only buffers.
+// The capture IOProc and the output render callback run on real-time threads
+// and touch only the ring buffer.
 
 import Accelerate
+import AudioToolbox
 import CoreAudio
 import Foundation
 import os
@@ -62,8 +67,11 @@ final class ProcessTapRouter {
         var tapID = AudioObjectID(kAudioObjectUnknown)
         var aggregateID = AudioObjectID(kAudioObjectUnknown)
         var ioProcID: AudioDeviceIOProcID?
-        /// Per-route volume, read by the IOProc on the audio thread. A plain
-        /// Float write is atomic on Apple Silicon, so no lock is needed.
+        var outputUnit: AudioUnit?
+        /// Captured audio waiting to be played: half a second at 48 kHz stereo.
+        let ring = RingBuffer(capacity: 48_000)
+        /// Per-route volume, read on the audio thread. A plain Float write is
+        /// atomic on Apple Silicon, so no lock is needed.
         let gain = GainBox()
 
         init(bundleID: String, pid: pid_t, deviceUID: String, deviceID: AudioDeviceID) {
@@ -201,17 +209,12 @@ final class ProcessTapRouter {
             log.info("Tap format for \(bundleID, privacy: .public): \(format.mSampleRate) Hz, \(format.mChannelsPerFrame) ch, \(format.mBitsPerChannel)-bit, flags \(format.mFormatFlags)")
         }
 
-        // 2. Private aggregate: tap in, chosen device out.
+        // 2. Private aggregate holding just the tap: our capture side.
         let aggregateDescription: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "AudioPin route: \(bundleID)",
-            kAudioAggregateDeviceUIDKey: "com.mattmoglia.AudioPin.route.\(UUID().uuidString)",
+            kAudioAggregateDeviceNameKey: "AudioPin capture: \(bundleID)",
+            kAudioAggregateDeviceUIDKey: "com.mattmoglia.AudioPin.capture.\(UUID().uuidString)",
             kAudioAggregateDeviceIsPrivateKey: true,
-            kAudioAggregateDeviceIsStackedKey: false,
             kAudioAggregateDeviceTapAutoStartKey: true,
-            kAudioAggregateDeviceMainSubDeviceKey: device.uid,
-            kAudioAggregateDeviceSubDeviceListKey: [
-                [kAudioSubDeviceUIDKey: device.uid],
-            ],
             kAudioAggregateDeviceTapListKey: [
                 [
                     kAudioSubTapUIDKey: description.uuid.uuidString,
@@ -223,26 +226,49 @@ final class ProcessTapRouter {
         guard status == noErr, route.aggregateID != kAudioObjectUnknown else {
             log.error("CreateAggregateDevice failed for \(bundleID, privacy: .public): \(status)")
             destroy(route)
-            return .failed("Couldn't create routing device (error \(status))")
+            return .failed("Couldn't create capture device (error \(status))")
         }
 
-        // 3. IOProc: copy tapped input to the output device.
-        let gain = route.gain
+        // 3. Capture IOProc: tapped audio -> ring buffer.
+        let ring = route.ring
         status = AudioDeviceCreateIOProcIDWithBlock(&route.ioProcID, route.aggregateID, ioQueue) {
-            _, inputData, _, outputData, _ in
-            ProcessTapRouter.copy(from: inputData, to: outputData, gain: gain.value)
+            _, inputData, _, _, _ in
+            let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputData))
+            guard buffers.count > 0, let data = buffers[0].mData else { return }
+            let samples = data.assumingMemoryBound(to: Float32.self)
+            ring.write(samples, count: Int(buffers[0].mDataByteSize) / MemoryLayout<Float32>.size)
         }
         guard status == noErr, route.ioProcID != nil else {
             log.error("CreateIOProcID failed for \(bundleID, privacy: .public): \(status)")
             destroy(route)
-            return .failed("Couldn't start audio copy (error \(status))")
+            return .failed("Couldn't start audio capture (error \(status))")
+        }
+
+        // 4. A normal output unit on the chosen device: ring buffer -> device.
+        //    Same path as any app, so the device's system processing applies.
+        guard let format = tapFormat(route.tapID) else {
+            destroy(route)
+            return .failed("Couldn't read the tap's audio format")
+        }
+        switch makeOutputUnit(device: device.id, format: format, ring: ring, gain: route.gain) {
+        case .success(let unit):
+            route.outputUnit = unit
+        case .failure(let message):
+            destroy(route)
+            return .failed(message)
         }
 
         status = AudioDeviceStart(route.aggregateID, route.ioProcID)
         guard status == noErr else {
             log.error("AudioDeviceStart failed for \(bundleID, privacy: .public): \(status)")
             destroy(route)
-            return .failed("Couldn't start routing device (error \(status))")
+            return .failed("Couldn't start capture (error \(status))")
+        }
+        status = AudioOutputUnitStart(route.outputUnit!)
+        guard status == noErr else {
+            log.error("AudioOutputUnitStart failed for \(bundleID, privacy: .public): \(status)")
+            destroy(route)
+            return .failed("Couldn't start playback (error \(status))")
         }
 
         routes[bundleID] = route
@@ -258,6 +284,12 @@ final class ProcessTapRouter {
 
     /// Reverse of `build`. Safe to call on a partially built route.
     private func destroy(_ route: Route) {
+        if let unit = route.outputUnit {
+            AudioOutputUnitStop(unit)
+            AudioUnitUninitialize(unit)
+            AudioComponentInstanceDispose(unit)
+            route.outputUnit = nil
+        }
         if let procID = route.ioProcID, route.aggregateID != kAudioObjectUnknown {
             AudioDeviceStop(route.aggregateID, procID)
             AudioDeviceDestroyIOProcID(route.aggregateID, procID)
@@ -273,55 +305,82 @@ final class ProcessTapRouter {
         }
     }
 
-    // MARK: - Audio copy (runs on the IO queue, real-time: no allocation, no locks)
+    // MARK: - Output unit (AUHAL on the target device)
 
-    /// Copies each input buffer into the matching output buffer. The tap is a
-    /// stereo mixdown; if the output device has a different channel count,
-    /// channels are matched frame by frame and the extras are silenced.
-    private static func copy(from inputList: UnsafePointer<AudioBufferList>, to outputList: UnsafeMutablePointer<AudioBufferList>, gain: Float) {
-        let input = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputList))
-        let output = UnsafeMutableAudioBufferListPointer(outputList)
+    private enum UnitResult {
+        case success(AudioUnit)
+        case failure(String)
+    }
 
-        for index in 0..<output.count {
-            let outBuffer = output[index]
-            guard let outData = outBuffer.mData else { continue }
-            let outBytes = Int(outBuffer.mDataByteSize)
+    /// Builds, configures and initializes an output unit that renders from
+    /// `ring` (scaled by `gain`) to `device`, in the tap's stream format.
+    private func makeOutputUnit(device: AudioDeviceID, format: AudioStreamBasicDescription,
+                                ring: RingBuffer, gain: GainBox) -> UnitResult {
+        var desc = AudioComponentDescription(
+            componentType: kAudioUnitType_Output,
+            componentSubType: kAudioUnitSubType_HALOutput,
+            componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0, componentFlagsMask: 0
+        )
+        guard let component = AudioComponentFindNext(nil, &desc) else {
+            return .failure("No output unit available")
+        }
+        var unit: AudioUnit?
+        var status = AudioComponentInstanceNew(component, &unit)
+        guard status == noErr, let unit else { return .failure("Couldn't create output unit (error \(status))") }
 
-            guard index < input.count, let inData = input[index].mData else {
-                memset(outData, 0, outBytes)
-                continue
-            }
-            let inBuffer = input[index]
-            let inBytes = Int(inBuffer.mDataByteSize)
-            let inChannels = Int(inBuffer.mNumberChannels)
-            let outChannels = Int(outBuffer.mNumberChannels)
+        // Output on bus 0, no input bus.
+        var enable: UInt32 = 1
+        var disable: UInt32 = 0
+        AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Output, 0, &enable, UInt32(MemoryLayout<UInt32>.size))
+        AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, 1, &disable, UInt32(MemoryLayout<UInt32>.size))
 
-            if inChannels == outChannels || inChannels == 0 || outChannels == 0 {
-                let n = min(inBytes, outBytes)
-                memcpy(outData, inData, n)
-                if n < outBytes { memset(outData + n, 0, outBytes - n) }
-                if gain != 1 {
-                    var g = gain
-                    let samples = outData.assumingMemoryBound(to: Float32.self)
-                    vDSP_vsmul(samples, 1, &g, samples, 1, vDSP_Length(n / MemoryLayout<Float32>.size))
-                }
-                continue
-            }
+        var deviceID = device
+        status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &deviceID, UInt32(MemoryLayout<AudioDeviceID>.size))
+        guard status == noErr else {
+            AudioComponentInstanceDispose(unit)
+            return .failure("Couldn't select the output device (error \(status))")
+        }
 
-            // Interleaved Float32 with different channel counts.
-            let sampleSize = MemoryLayout<Float32>.size
-            let inFrames = inBytes / (sampleSize * inChannels)
-            let outFrames = outBytes / (sampleSize * outChannels)
-            let frames = min(inFrames, outFrames)
-            let src = inData.assumingMemoryBound(to: Float32.self)
-            let dst = outData.assumingMemoryBound(to: Float32.self)
-            memset(outData, 0, outBytes)
-            let channels = min(inChannels, outChannels)
-            for frame in 0..<frames {
-                for channel in 0..<channels {
-                    dst[frame * outChannels + channel] = src[frame * inChannels + channel] * gain
-                }
-            }
+        // We hand the unit audio in the tap's format; it converts to whatever
+        // the device wants.
+        var inFormat = format
+        status = AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &inFormat, UInt32(MemoryLayout<AudioStreamBasicDescription>.size))
+        guard status == noErr else {
+            AudioComponentInstanceDispose(unit)
+            return .failure("Output unit rejected the audio format (error \(status))")
+        }
+
+        let context = RenderContext(ring: ring, gain: gain, channels: Int(format.mChannelsPerFrame))
+        let contextPointer = Unmanaged.passRetained(context).toOpaque()
+        var callback = AURenderCallbackStruct(inputProc: renderCallback, inputProcRefCon: contextPointer)
+        status = AudioUnitSetProperty(unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &callback, UInt32(MemoryLayout<AURenderCallbackStruct>.size))
+        guard status == noErr else {
+            Unmanaged<RenderContext>.fromOpaque(contextPointer).release()
+            AudioComponentInstanceDispose(unit)
+            return .failure("Couldn't attach the audio source (error \(status))")
+        }
+
+        status = AudioUnitInitialize(unit)
+        guard status == noErr else {
+            Unmanaged<RenderContext>.fromOpaque(contextPointer).release()
+            AudioComponentInstanceDispose(unit)
+            return .failure("Couldn't initialize the output unit (error \(status))")
+        }
+        // The context is intentionally leaked for the unit's lifetime; it is a
+        // few bytes per route and the ring buffer is shared with the Route.
+        return .success(unit)
+    }
+
+    /// What the render callback needs, reachable through an opaque pointer.
+    final class RenderContext {
+        let ring: RingBuffer
+        let gain: GainBox
+        let channels: Int
+        init(ring: RingBuffer, gain: GainBox, channels: Int) {
+            self.ring = ring
+            self.gain = gain
+            self.channels = channels
         }
     }
 
@@ -365,5 +424,101 @@ final class ProcessTapRouter {
         // tap on a valid process is almost always the TCC prompt being
         // declined, so point there.
         "Couldn't tap this app (error \(status)). Allow AudioPin under System Settings > Privacy & Security > Screen & System Audio Recording, then try again."
+    }
+}
+
+
+/// Real-time render callback: pulls interleaved Float32 from the ring buffer
+/// into the output unit's buffer, applies the route's gain, zero-fills on
+/// underrun. No allocation, no Swift collections.
+private func renderCallback(
+    _ refCon: UnsafeMutableRawPointer,
+    _ ioActionFlags: UnsafeMutablePointer<AudioUnitRenderActionFlags>,
+    _ inTimeStamp: UnsafePointer<AudioTimeStamp>,
+    _ inBusNumber: UInt32,
+    _ inNumberFrames: UInt32,
+    _ ioData: UnsafeMutablePointer<AudioBufferList>?
+) -> OSStatus {
+    guard let ioData else { return noErr }
+    let context = Unmanaged<ProcessTapRouter.RenderContext>.fromOpaque(refCon).takeUnretainedValue()
+    let buffers = UnsafeMutableAudioBufferListPointer(ioData)
+    guard buffers.count > 0, let data = buffers[0].mData else { return noErr }
+    let samples = data.assumingMemoryBound(to: Float32.self)
+    let wanted = Int(inNumberFrames) * context.channels
+    let got = context.ring.read(into: samples, count: wanted)
+    if got < wanted {
+        memset(samples + got, 0, (wanted - got) * MemoryLayout<Float32>.size)
+    }
+    let gain = context.gain.value
+    if gain != 1, got > 0 {
+        var g = gain
+        vDSP_vsmul(samples, 1, &g, samples, 1, vDSP_Length(got))
+    }
+    return noErr
+}
+
+/// Single-producer, single-consumer ring of Float32 samples. The capture
+/// IOProc writes, the output render callback reads. A short unfair lock guards
+/// the indices; the copies are small (a few KB per callback).
+final class RingBuffer {
+    private let storage: UnsafeMutablePointer<Float32>
+    private let capacity: Int
+    private var head = 0        // next write position
+    private var tail = 0        // next read position
+    private var count = 0
+    private var lock = os_unfair_lock()
+    /// Don't start playing until this much is buffered, to ride out jitter
+    /// between the capture and playback clocks (about 20 ms at 48 kHz stereo).
+    private let prefill = 2048
+    private var primed = false
+
+    init(capacity: Int) {
+        self.capacity = capacity
+        storage = UnsafeMutablePointer<Float32>.allocate(capacity: capacity)
+        storage.initialize(repeating: 0, count: capacity)
+    }
+
+    deinit { storage.deallocate() }
+
+    func write(_ src: UnsafePointer<Float32>, count n: Int) {
+        os_unfair_lock_lock(&lock)
+        var toWrite = min(n, capacity)
+        // If the reader fell behind, drop the oldest audio rather than block.
+        if count + toWrite > capacity {
+            let drop = count + toWrite - capacity
+            tail = (tail + drop) % capacity
+            count -= drop
+        }
+        var offset = n - toWrite
+        while toWrite > 0 {
+            let chunk = min(toWrite, capacity - head)
+            memcpy(storage + head, src + offset, chunk * MemoryLayout<Float32>.size)
+            head = (head + chunk) % capacity
+            offset += chunk
+            toWrite -= chunk
+            count += chunk
+        }
+        if count >= prefill { primed = true }
+        os_unfair_lock_unlock(&lock)
+    }
+
+    /// Reads up to `n` samples; returns how many were available.
+    func read(into dst: UnsafeMutablePointer<Float32>, count n: Int) -> Int {
+        os_unfair_lock_lock(&lock)
+        guard primed else { os_unfair_lock_unlock(&lock); return 0 }
+        var toRead = min(n, count)
+        let total = toRead
+        var offset = 0
+        while toRead > 0 {
+            let chunk = min(toRead, capacity - tail)
+            memcpy(dst + offset, storage + tail, chunk * MemoryLayout<Float32>.size)
+            tail = (tail + chunk) % capacity
+            offset += chunk
+            toRead -= chunk
+            count -= chunk
+        }
+        if count == 0 { primed = false }   // underrun: re-buffer before resuming
+        os_unfair_lock_unlock(&lock)
+        return total
     }
 }
