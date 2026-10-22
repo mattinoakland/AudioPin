@@ -398,12 +398,19 @@ final class AppState: ObservableObject {
             persist()
         }
 
+        // When the system output moves, every route is rebuilt: the tap's
+        // stream format follows the app's device, and a tap created for the
+        // old device can sound thin (lost low end) on the new one.
+        if outputChanged, !routeRules.isEmpty {
+            log.info("System output changed; rebuilding \(self.routeRules.count) route(s)")
+        }
         let requests = routeRules.map { bundleID, rule in
             ProcessTapRouter.Request(
                 bundleID: bundleID,
                 pid: routableApps.first { $0.bundleID == bundleID }?.pid,
                 device: devices.first { $0.uid == rule.deviceUID && $0.hasOutput },
-                volume: Float(rule.volume)
+                volume: Float(rule.volume),
+                rebuild: outputChanged
             )
         }
         router.apply(requests) { [weak self] states in

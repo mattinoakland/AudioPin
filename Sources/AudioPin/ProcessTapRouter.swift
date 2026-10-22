@@ -95,6 +95,10 @@ final class ProcessTapRouter {
         let pid: pid_t?            // nil when the app isn't running
         let device: AudioDevice?   // nil when the target device isn't connected
         let volume: Float          // 0...1, applied to the copied audio
+        /// Tear the route down and build it again even if nothing else
+        /// changed. Used when the system output moves: the tap's stream
+        /// format follows the app's device, so a stale tap can sound wrong.
+        var rebuild: Bool = false
     }
 
     /// Make reality match `requests`: build routes that are missing, rebuild
@@ -157,6 +161,7 @@ final class ProcessTapRouter {
                 let unchanged = existing.pid == pid
                     && existing.deviceUID == device.uid
                     && existing.deviceID == device.id
+                    && !request.rebuild
                 if unchanged, case .active = states[request.bundleID] {
                     existing.gain.value = request.volume
                     continue
@@ -191,6 +196,9 @@ final class ProcessTapRouter {
         guard status == noErr, route.tapID != kAudioObjectUnknown else {
             log.error("CreateProcessTap failed for \(bundleID, privacy: .public): \(status)")
             return .failed(Self.explainTapError(status))
+        }
+        if let format = tapFormat(route.tapID) {
+            log.info("Tap format for \(bundleID, privacy: .public): \(format.mSampleRate) Hz, \(format.mChannelsPerFrame) ch, \(format.mBitsPerChannel)-bit, flags \(format.mFormatFlags)")
         }
 
         // 2. Private aggregate: tap in, chosen device out.
@@ -337,6 +345,19 @@ final class ProcessTapRouter {
         )
         guard status == noErr, object != kAudioObjectUnknown else { return nil }
         return object
+    }
+
+    /// The stream format the tap delivers (follows the tapped app's device).
+    private func tapFormat(_ tapID: AudioObjectID) -> AudioStreamBasicDescription? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioTapPropertyFormat,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var format = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        guard AudioObjectGetPropertyData(tapID, &address, 0, nil, &size, &format) == noErr else { return nil }
+        return format
     }
 
     private static func explainTapError(_ status: OSStatus) -> String {
