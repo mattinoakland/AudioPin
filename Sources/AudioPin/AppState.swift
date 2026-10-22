@@ -109,6 +109,8 @@ final class AppState: ObservableObject {
     private var signalSources: [DispatchSourceSignal] = []
     /// System output seen on the last route pass, to notice when it moves.
     private var lastSystemOutputUID: String?
+    /// Each route's target device on the last pass, to notice when it changes.
+    private var lastRouteDeviceUID: [String: String] = [:]
 
     private enum Key {
         static let pinnedOutputUID = "pinnedOutputUID"
@@ -304,6 +306,7 @@ final class AppState: ObservableObject {
         } else {
             if let old = routeRules[app.bundleID] { lastRouteVolumes[app.bundleID] = old.volume }
             routeRules[app.bundleID] = nil
+            lastRouteDeviceUID[app.bundleID] = nil
             log.info("Rule removed: \(app.bundleID, privacy: .public)")
         }
         persist()
@@ -363,7 +366,11 @@ final class AppState: ObservableObject {
         lastSystemOutputUID = currentOutput?.uid
         var opened: [String: Float] = [:]   // device UID -> level it had before
         for (bundleID, rule) in routeRules {
-            guard routeStates[bundleID]?.isActive != true || outputChanged,
+            // A route "starts" when it's new, when its target device changes
+            // (headset -> speakers), or when the system output moves off it.
+            let targetChanged = lastRouteDeviceUID[bundleID] != rule.deviceUID
+            lastRouteDeviceUID[bundleID] = rule.deviceUID
+            guard routeStates[bundleID]?.isActive != true || outputChanged || targetChanged,
                   opened[rule.deviceUID] == nil,
                   let device = devices.first(where: { $0.uid == rule.deviceUID && $0.hasOutput }),
                   device.uid != currentOutput?.uid
