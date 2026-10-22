@@ -118,7 +118,7 @@ struct PanelView: View {
                 if let rule = state.routeRules[app.bundleID] {
                     RoutedAppRow(app: app, rule: rule)
                     LevelRow(symbol: "speaker.wave.2", label: "Volume",
-                             device: nil, level: Float(rule.volume), alwaysEnabled: true) {
+                             device: nil, level: state.routeLevels[app.bundleID] ?? Float(rule.volume), alwaysEnabled: true) {
                         state.setVolume(for: app.bundleID, Double($0))
                     }
                 }

@@ -73,6 +73,8 @@ final class AppState: ObservableObject {
     /// Hardware level of the pinned output / input (nil = no level control).
     @Published private(set) var outputLevel: Float?
     @Published private(set) var inputLevel: Float?
+    /// What each routed app's slider shows (see routeLevel(for:)).
+    @Published private(set) var routeLevels: [String: Float] = [:]
     /// A newer version the server told us about, if any.
     @Published private(set) var availableUpdate: UpdateInfo?
     @Published var sendUsageStats: Bool {
@@ -215,6 +217,11 @@ final class AppState: ObservableObject {
     func refreshLevels() {
         outputLevel = outputVolume()
         inputLevel = inputGain()
+        var levels: [String: Float] = [:]
+        for bundleID in routeRules.keys {
+            levels[bundleID] = routeLevel(for: bundleID)
+        }
+        routeLevels = levels
     }
 
     /// The core rule: if enforcing and a pinned device is present but not
@@ -314,15 +321,43 @@ final class AppState: ObservableObject {
         applyRoutes()
     }
 
-    /// Volume for a routed app, 0...1. Applied live; saved with the rule.
+    /// The device whose hardware level a routed app's slider should move:
+    /// the route's target, when it isn't the system output (the volume keys
+    /// own that one) and it has a software-controllable level.
+    func hardwareVolumeDevice(for rule: RouteRule) -> AudioDevice? {
+        guard rule.deviceUID != currentOutput?.uid,
+              let device = devices.first(where: { $0.uid == rule.deviceUID && $0.hasOutput }),
+              manager.volume(of: device.id, scope: kAudioDevicePropertyScopeOutput) != nil
+        else { return nil }
+        return device
+    }
+
+    /// What a routed app's slider shows: the target device's hardware level
+    /// when that's what it drives, otherwise the app's own digital level.
+    func routeLevel(for bundleID: String) -> Float? {
+        guard let rule = routeRules[bundleID] else { return nil }
+        if let device = hardwareVolumeDevice(for: rule) {
+            return manager.volume(of: device.id, scope: kAudioDevicePropertyScopeOutput)
+        }
+        return Float(rule.volume)
+    }
+
+    /// Volume for a routed app, 0...1. Moves the target device's hardware
+    /// level when the device isn't the system output; otherwise a digital
+    /// level on just that app's audio. Applied live.
     func setVolume(for bundleID: String, _ volume: Double) {
         guard let rule = routeRules[bundleID] else { return }
         let clamped = max(0, min(1, volume))
-        if clamped > 0, let device = devices.first(where: { $0.uid == rule.deviceUID }) {
-            manager.unmute(device.id)
+        if let device = hardwareVolumeDevice(for: rule) {
+            if clamped > 0 { manager.unmute(device.id) }
+            manager.setVolume(of: device.id, scope: kAudioDevicePropertyScopeOutput, to: Float(clamped))
+            router.setGain(bundleID: bundleID, 1)
+            routeLevels[bundleID] = Float(clamped)
+            return
         }
         routeRules[bundleID]?.volume = clamped
         router.setGain(bundleID: bundleID, Float(clamped))
+        routeLevels[bundleID] = Float(clamped)
         persist()
     }
 
@@ -355,47 +390,27 @@ final class AppState: ObservableObject {
     }
 
     private func applyRoutes() {
-        // A routed app's audio goes straight to its device's hardware level,
-        // which nothing else moves (the volume keys only touch the system
-        // output). If that level was left low, routed audio tops out low. So
-        // when a route starts to a device that isn't the system output, or
-        // the system output moves off a routed device, open the device all
-        // the way up and scale the app's slider down by the same amount, so
-        // nothing gets louder but the slider now has headroom above it.
+        // Routed audio goes straight to its device. The volume keys only ever
+        // touch the system output, so a routed device's own level is driven
+        // by the routed app's slider instead (see setVolume). All we do here
+        // is make sure the device isn't left muted from an earlier mute-key
+        // press, which would make the route silent no matter what.
+        //
+        // We deliberately do NOT push the device's hardware level to 100% and
+        // attenuate digitally: the MacBook speakers' processing tunes bass to
+        // the hardware level, so "100% hardware, quiet signal" sounds thin.
         let outputChanged = currentOutput?.uid != lastSystemOutputUID
         lastSystemOutputUID = currentOutput?.uid
-        var opened: [String: Float] = [:]   // device UID -> level it had before
         for (bundleID, rule) in routeRules {
-            // A route "starts" when it's new, when its target device changes
-            // (headset -> speakers), or when the system output moves off it.
             let targetChanged = lastRouteDeviceUID[bundleID] != rule.deviceUID
             lastRouteDeviceUID[bundleID] = rule.deviceUID
             guard routeStates[bundleID]?.isActive != true || outputChanged || targetChanged,
-                  opened[rule.deviceUID] == nil,
                   let device = devices.first(where: { $0.uid == rule.deviceUID && $0.hasOutput }),
                   device.uid != currentOutput?.uid
             else { continue }
-            // A muted device plays nothing no matter what the sliders say. The
-            // mute key only ever meant the system output, so clear it here.
             if manager.unmute(device.id) {
                 log.info("Unmuted \(device.name, privacy: .public) for route \(bundleID, privacy: .public)")
             }
-            guard let level = manager.volume(of: device.id, scope: kAudioDevicePropertyScopeOutput),
-                  level < 0.999
-            else { continue }
-            if manager.setVolume(of: device.id, scope: kAudioDevicePropertyScopeOutput, to: 1) {
-                opened[device.uid] = level
-                log.info("Opened \(device.name, privacy: .public) to 100% for route \(bundleID, privacy: .public) (was \(Int(level * 100))%)")
-            }
-        }
-        if !opened.isEmpty {
-            for (bundleID, rule) in routeRules {
-                guard let level = opened[rule.deviceUID] else { continue }
-                let scaled = max(0, min(1, rule.volume * Double(level)))
-                routeRules[bundleID]?.volume = scaled
-                log.info("Scaled \(bundleID, privacy: .public) slider \(Int(rule.volume * 100))% -> \(Int(scaled * 100))% to keep loudness")
-            }
-            persist()
         }
 
         // When the system output moves, every route is rebuilt: the tap's
@@ -409,12 +424,13 @@ final class AppState: ObservableObject {
                 bundleID: bundleID,
                 pid: routableApps.first { $0.bundleID == bundleID }?.pid,
                 device: devices.first { $0.uid == rule.deviceUID && $0.hasOutput },
-                volume: Float(rule.volume),
+                volume: hardwareVolumeDevice(for: rule) == nil ? Float(rule.volume) : 1,
                 rebuild: outputChanged
             )
         }
         router.apply(requests) { [weak self] states in
             self?.routeStates = states
+            self?.refreshLevels()
         }
     }
 
