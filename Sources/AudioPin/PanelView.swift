@@ -79,7 +79,9 @@ struct PanelView: View {
             divider
 
             section(nil) {
-                ActionRow("Buy me a coffee", symbol: "cup.and.saucer") { open(Links.coffee) }
+                ActionRow("Buy me a coffee", symbol: "cup.and.saucer") {
+                    NotificationCenter.default.post(name: .audioPinOpenCoffee, object: nil)
+                }
                 ActionRow("Send feedback", symbol: "envelope") { open(Links.feedbackMailto) }
                 ActionRow("Refresh devices") { state.refreshAndEnforce() }
                 ActionRow("Quit AudioPin", shortcut: "⌘Q") { NSApplication.shared.terminate(nil) }
@@ -402,4 +404,9 @@ private struct RowButtonStyle: ButtonStyle {
             .padding(.horizontal, 4)
             .onHover { hovering = $0 }
     }
+}
+
+extension Notification.Name {
+    /// Posted by the panel; MenuBarController opens the in-app coffee window.
+    static let audioPinOpenCoffee = Notification.Name("com.mattmoglia.AudioPin.openCoffee")
 }

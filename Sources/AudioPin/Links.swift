@@ -8,8 +8,10 @@ enum Links {
     static let site = URL(string: "https://mattmoglia.com")!
     /// The app's own page: download, install help, release notes.
     static let appPage = URL(string: "https://mattmoglia.com/audiopin")!
-    /// "Buy me a coffee": the tip box on the app's page (paid inline there).
+    /// "Buy me a coffee": the tip page. The app shows it in its own small
+    /// window (embed mode); this plain URL is the fallback for a browser.
     static let coffee = URL(string: "https://mattmoglia.com/audiopin/coffee")!
+    static let coffeeEmbed = URL(string: "https://mattmoglia.com/audiopin/coffee?embed=1")!
     /// Feedback goes straight to Matt's inbox.
     static let feedbackEmail = "hi@mattmoglia.com"
     /// Anonymous usage ping + "is there a newer version" check (see Telemetry).

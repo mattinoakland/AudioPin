@@ -66,6 +66,10 @@ the icon again.
 - **Enforce pins** (on by default) is the master switch. Turn it off to let
   macOS do whatever it wants while keeping your pins saved. The icon is filled
   when enforcing, outlined when not.
+- **Buy me a coffee** opens a small checkout window inside the app (the tip
+  page from mattmoglia.com in a compact mode). Cards and Link work right
+  there; for Apple Pay the window offers a one-click handoff to Safari,
+  because macOS doesn't expose Apple Pay to embedded web views.
 - **Launch at login** registers AudioPin as a login item. The first time, macOS
   may show a notice that a background item was added; that's expected.
   If the menu says approval is needed, allow it under

@@ -23,6 +23,8 @@ final class MenuBarController: NSObject {
     private let panelWidth: CGFloat = 320
     private var cancellable: AnyCancellable?
     private var clickMonitors: [Any] = []
+    private let coffee = CoffeeWindow()
+    private var coffeeObserver: NSObjectProtocol?
 
     private let cornerRadius: CGFloat = 11
 
@@ -82,6 +84,16 @@ final class MenuBarController: NSObject {
         }
         updateIcon()
 
+        coffeeObserver = NotificationCenter.default.addObserver(
+            forName: .audioPinOpenCoffee, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.openCoffee() }
+        }
+        // For testing: `AudioPin --coffee` opens the tip window at launch.
+        if CommandLine.arguments.contains("--coffee") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.openCoffee() }
+        }
+
         // Keep the icon in sync with "Enforce pins" (fires before the change,
         // so hop to the next run-loop turn to read the new value).
         cancellable = state.objectWillChange.sink { [weak self] _ in
@@ -96,6 +108,15 @@ final class MenuBarController: NSObject {
         let image = NSImage(systemSymbolName: name, accessibilityDescription: "AudioPin")
         image?.isTemplate = true
         statusItem.button?.image = image
+    }
+
+    /// Close the panel and show the tip window under the icon.
+    private func openCoffee() {
+        close()
+        let button = statusItem.button
+        let anchor = button.flatMap { b in b.window.map { $0.convertToScreen(b.convert(b.bounds, to: nil)) } }
+        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? button?.window?.screen
+        coffee.show(near: anchor, on: screen)
     }
 
     // MARK: - Open / close
