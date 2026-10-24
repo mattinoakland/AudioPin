@@ -57,8 +57,9 @@ the icon again.
 - **Now playing through** shows the current default output and input.
 - **Pinned output** / **Pinned input** list every device. Check one to pin it.
   Checking a device applies it immediately. Uncheck or "Clear ... pin" to stop.
-- If a pinned device is unplugged, the menu says "(not connected)" and AudioPin
-  leaves macOS's choice alone until the device returns.
+- If a pinned device is unplugged, it simply disappears from the list and
+  AudioPin leaves macOS's choice alone; the pin is remembered and takes over
+  again the moment the device returns.
 - A **volume slider** sits under the pinned output list and a **gain slider**
   under the pinned input list. They move the pinned device's own level, the
   same one the volume keys and Sound settings change. Devices without a

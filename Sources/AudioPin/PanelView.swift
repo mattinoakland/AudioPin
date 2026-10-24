@@ -33,9 +33,6 @@ struct PanelView: View {
                         state.pinOutput(isPin ? nil : device)
                     }
                 }
-                if let name = state.pinnedOutputName, state.pinnedOutputUID != nil, !state.pinnedOutputConnected {
-                    InfoRow("\(name) (not connected)")
-                }
                 LevelRow(symbol: "speaker.wave.2", label: "Volume",
                          device: state.volumeOutputDevice, level: state.outputLevel) {
                     state.setOutputVolume($0)
@@ -50,9 +47,6 @@ struct PanelView: View {
                     CheckRow(device.name, checked: isPin || inUse) {
                         state.pinInput(isPin ? nil : device)
                     }
-                }
-                if let name = state.pinnedInputName, state.pinnedInputUID != nil, !state.pinnedInputConnected {
-                    InfoRow("\(name) (not connected)")
                 }
                 LevelRow(symbol: "mic", label: "Gain",
                          device: state.volumeInputDevice, level: state.inputLevel) {
