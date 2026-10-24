@@ -93,7 +93,7 @@ final class CoffeeWindow: NSObject, WKNavigationDelegate, WKUIDelegate {
             var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
             let kept = (comps?.queryItems ?? []).filter { $0.name != "browser" && $0.name != "embed" }
             comps?.queryItems = kept.isEmpty ? nil : kept
-            NSWorkspace.shared.open(comps?.url ?? url)
+            Self.openInSafari(comps?.url ?? url)
             decisionHandler(.cancel)
             close()
             return
@@ -105,6 +105,23 @@ final class CoffeeWindow: NSObject, WKNavigationDelegate, WKUIDelegate {
         } else {
             NSWorkspace.shared.open(url)
             decisionHandler(.cancel)
+        }
+    }
+
+    /// Apple Pay on the web only exists in Safari, so the handoff must open
+    /// Safari itself, not whatever the default browser happens to be.
+    private static func openInSafari(_ url: URL) {
+        if let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Safari") {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            NSWorkspace.shared.open([url], withApplicationAt: safari, configuration: config) { _, error in
+                if let error {
+                    log.error("Safari handoff failed: \(error.localizedDescription, privacy: .public)")
+                    DispatchQueue.main.async { NSWorkspace.shared.open(url) }
+                }
+            }
+        } else {
+            NSWorkspace.shared.open(url)
         }
     }
 
