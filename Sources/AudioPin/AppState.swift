@@ -290,6 +290,9 @@ final class AppState: ObservableObject {
         if value > 0 { manager.unmute(device.id) }
         manager.setVolume(of: device.id, scope: kAudioDevicePropertyScopeOutput, to: value)
         outputLevel = value
+        for (bundleID, rule) in routeRules where rule.deviceUID == device.uid {
+            routeLevels[bundleID] = value
+        }
     }
 
     func setInputGain(_ value: Float) {
@@ -321,12 +324,14 @@ final class AppState: ObservableObject {
         applyRoutes()
     }
 
-    /// The device whose hardware level a routed app's slider should move:
-    /// the route's target, when it isn't the system output (the volume keys
-    /// own that one) and it has a software-controllable level.
+    /// The device whose hardware level a routed app's slider moves: the
+    /// route's target, whenever it has a software-controllable level. If the
+    /// target is also the system output, this is the same control as the
+    /// pinned-output slider and the volume keys, and they move together.
+    /// Only a device with no level control (an HDMI display) falls back to a
+    /// per-app digital level.
     func hardwareVolumeDevice(for rule: RouteRule) -> AudioDevice? {
-        guard rule.deviceUID != currentOutput?.uid,
-              let device = devices.first(where: { $0.uid == rule.deviceUID && $0.hasOutput }),
+        guard let device = devices.first(where: { $0.uid == rule.deviceUID && $0.hasOutput }),
               manager.volume(of: device.id, scope: kAudioDevicePropertyScopeOutput) != nil
         else { return nil }
         return device
@@ -353,6 +358,7 @@ final class AppState: ObservableObject {
             manager.setVolume(of: device.id, scope: kAudioDevicePropertyScopeOutput, to: Float(clamped))
             router.setGain(bundleID: bundleID, 1)
             routeLevels[bundleID] = Float(clamped)
+            if device.uid == volumeOutputDevice?.uid { outputLevel = Float(clamped) }
             return
         }
         routeRules[bundleID]?.volume = clamped
@@ -405,8 +411,7 @@ final class AppState: ObservableObject {
             let targetChanged = lastRouteDeviceUID[bundleID] != rule.deviceUID
             lastRouteDeviceUID[bundleID] = rule.deviceUID
             guard routeStates[bundleID]?.isActive != true || outputChanged || targetChanged,
-                  let device = devices.first(where: { $0.uid == rule.deviceUID && $0.hasOutput }),
-                  device.uid != currentOutput?.uid
+                  let device = devices.first(where: { $0.uid == rule.deviceUID && $0.hasOutput })
             else { continue }
             if manager.unmute(device.id) {
                 log.info("Unmuted \(device.name, privacy: .public) for route \(bundleID, privacy: .public)")

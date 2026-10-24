@@ -89,13 +89,15 @@ device. Open the menu, go to **App routing**, pick an app, and choose a device.
   audio, device not connected, or an error.
 - Apps with a rule are listed first; apps that aren't running show
   "(not running)".
-- Each routed app has a **Volume** slider under it. When the routed device
-  isn't the system output (so the volume keys can't reach it), the slider
-  moves that device's own volume, exactly like the volume keys would. That
-  keeps the Mac's speaker tuning behaving normally; pushing a device to 100%
-  and turning the signal down digitally makes the MacBook speakers sound thin.
-  When the routed device *is* the system output, the slider is a per-app level
-  on top of the system volume. It scales the audio
+- Each routed app has a **Volume** slider under it. It moves the target
+  device's own volume, exactly like the volume keys would. If the routed
+  device is also the system output, this slider and the pinned-output slider
+  are the same control and move together. (Turning a device up to 100% and
+  attenuating digitally instead would make the MacBook speakers sound thin,
+  so AudioPin never does that.) Only a device with no volume control, like an
+  HDMI display, gets a per-app digital level instead.
+- The checkmark in the device lists sits on the pinned device. If the pin is
+  unplugged, or nothing is pinned, it sits on whatever the Mac is using. It scales the audio
   AudioPin sends to that device, so the Mac's volume keys (which control the
   pinned system output) and the device's own volume wheel both still work on
   top of it. The setting is saved with the rule.

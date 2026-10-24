@@ -25,8 +25,12 @@ struct PanelView: View {
 
             section("Pinned output") {
                 ForEach(state.outputDevices) { device in
-                    CheckRow(device.name, checked: state.pinnedOutputUID == device.uid) {
-                        state.pinOutput(state.pinnedOutputUID == device.uid ? nil : device)
+                    // The check sits on the pinned device; if the pin is absent
+                    // or unplugged, on whatever macOS is actually using.
+                    let isPin = state.pinnedOutputUID == device.uid
+                    let inUse = !state.pinnedOutputConnected && state.currentOutput?.uid == device.uid
+                    CheckRow(device.name, checked: isPin || inUse) {
+                        state.pinOutput(isPin ? nil : device)
                     }
                 }
                 if let name = state.pinnedOutputName, state.pinnedOutputUID != nil, !state.pinnedOutputConnected {
@@ -41,8 +45,10 @@ struct PanelView: View {
 
             section("Pinned input") {
                 ForEach(state.inputDevices) { device in
-                    CheckRow(device.name, checked: state.pinnedInputUID == device.uid) {
-                        state.pinInput(state.pinnedInputUID == device.uid ? nil : device)
+                    let isPin = state.pinnedInputUID == device.uid
+                    let inUse = !state.pinnedInputConnected && state.currentInput?.uid == device.uid
+                    CheckRow(device.name, checked: isPin || inUse) {
+                        state.pinInput(isPin ? nil : device)
                     }
                 }
                 if let name = state.pinnedInputName, state.pinnedInputUID != nil, !state.pinnedInputConnected {
