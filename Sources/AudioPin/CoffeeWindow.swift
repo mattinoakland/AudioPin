@@ -85,9 +85,16 @@ final class CoffeeWindow: NSObject, WKNavigationDelegate, WKUIDelegate {
     }
 
     // Links on the page that leave the tip flow open in the real browser.
+    // Everything else (Stripe's helper frames, captcha, Link, redirects the
+    // payment flow makes itself) stays in the window.
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
+        let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+        if !isMainFrame {
+            decisionHandler(.allow)   // iframes: always in place
+            return
+        }
         // "Pay with Apple Pay in Safari": the page asks for the real browser.
         if url.query?.contains("browser=1") == true {
             var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -99,10 +106,12 @@ final class CoffeeWindow: NSObject, WKNavigationDelegate, WKUIDelegate {
             return
         }
         let isOurs = url.host == Links.coffeeEmbed.host && url.path.hasPrefix("/audiopin/coffee")
-        let isStripe = (url.host ?? "").hasSuffix("stripe.com") || (url.host ?? "").hasSuffix("link.com")
-        if isOurs || isStripe || url.scheme == "about" {
+        let isLinkClick = navigationAction.navigationType == .linkActivated
+        if isOurs || !isLinkClick || url.scheme == "about" {
             decisionHandler(.allow)
         } else {
+            // A real link the person clicked (terms, privacy policy, ...):
+            // hand it to the browser rather than wandering off inside the window.
             NSWorkspace.shared.open(url)
             decisionHandler(.cancel)
         }
